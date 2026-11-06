@@ -6,7 +6,9 @@ Déjà records the real scheduling order of a running asyncio app (which task ra
 what the clock and random number generator said) and replays it on your laptop with a deterministic event loop.
 The bug that only happened when two requests overlapped in production happens again, every time.
 
-> Status: design stage. Nothing here is usable yet. See [docs/DESIGN.md](docs/DESIGN.md).
+> Status: planning done, building next. Nothing here is usable yet.
+> Problem and prior art: [docs/DESIGN.md](docs/DESIGN.md) · Architecture and milestones: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
+> Feasibility spikes: [spikes/RESULTS.md](spikes/RESULTS.md)
 
 ## Why
 
