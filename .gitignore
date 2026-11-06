@@ -7,3 +7,5 @@ build/
 .pytest_cache/
 *.deja
 .env
+.venv312/
+deja-recordings/

@@ -37,10 +37,14 @@ RECORD (production)                                         REPLAY (laptop / CI)
 ### 3.1 Loops (`deja/loop/`)
 
 - `RecordingLoop` and `ReplayLoop` are subclasses of `SelectorEventLoop` and (Windows) `ProactorEventLoop`.
-- **Single hook point: `_run_once`.** Déjà carries its own copy of CPython's `_run_once` per minor version
-  (`deja/loop/_runonce_312.py`, `_313`, `_314`, `_315`), because the recorder must log the exact batch *after* the
-  selector and expired timers have been moved into `_ready`, and the replayer must choose which handle runs.
-  Rationale: spike S2 (per-pass logging +3–10% vs per-callback wrapping +55–138%), spike S1-C (reordering works).
+- **Single hook point: `_run_once`.** Déjà carries one instrumented copy of CPython's `_run_once` (`deja/loop.py`),
+  because the recorder must log the exact batch *after* the selector and expired timers have been moved into
+  `_ready`, and the replayer must choose which handle runs. The function is identical in 3.12 and 3.14 apart from
+  how the select timeout is clamped, so one copy serves both; new versions are added to `_compat.VERIFIED` only
+  after their source is compared. Rationale: spike S2, spike S1-C.
+- **Hot path stores one int per handle** (`id()` of the callback's owner) or an interned marker. Storing callback
+  objects instead made the cyclic GC rescan the buffer (measured +22–40%); ints are not GC-tracked. Ids are mapped
+  back to task paths at dump time from `TASK_NEW` / `TASK_GONE` events, which stays correct when ids are reused.
 - Version gate: on an unknown Python version Déjà refuses to record (warns, runs the app unrecorded). Never guess.
 
 ### 3.2 Task identity (`deja/ids.py`)
@@ -139,13 +143,16 @@ Per loop pass (generalised from spike S3):
 
 | # | Decision | Why |
 |---|---|---|
-| D1 | Hook `_run_once` with a vendored per-version copy | Spike S2: per-pass logging is 10–40× cheaper than wrapping callbacks; recorder needs the post-select batch |
+| D1 | Hook `_run_once` with one vendored copy + version gate | Spike S2: per-pass logging is 10–40× cheaper than wrapping callbacks; recorder needs the post-select batch; 3.12 and 3.14 copies are identical in substance |
 | D2 | Stable path ids from the task creation tree | Spike S1 (3.12 names unset at first schedule); Temporal #2069 (hash order) |
 | D3 | Capture I/O at client-library level | Socket-level capture can't map bytes to tasks cheaply; adapters give typed results and redaction |
 | D4 | Standard loops first, uvloop later | uvloop is Cython; private loop internals differ. Record under the stdlib loop in v1 |
 | D5 | Stdlib-only core | Easy to drop into production; adapters import their library lazily |
 | D6 | Python 3.12+ | `asyncio.run(loop_factory=...)`, eager tasks exist, 3.11 support adds cost for little reach |
 | D7 | Refuse to record on unknown Python versions | A wrong `_run_once` copy would silently produce bad recordings |
+| D8 | Store `id(owner)` ints in the hot path, resolve at dump | M1 measurement: callback objects in the buffer → GC rescans (+22–40%); ints → ~10–25% worst case on a busy desktop |
+| D9 | Reserve a task's path before constructing it | Eager tasks run their first step inside the constructor; children appeared before the parent was registered (caught by `test_eager_tasks_are_registered`) |
+| D10 | `weakref.ref` callbacks, not `weakref.finalize`, to forget dead tasks | Several times cheaper per task; same effect |
 
 ## 5. Testing strategy
 
@@ -164,7 +171,16 @@ Per loop pass (generalised from spike S3):
 - Report: throughput, p50/p95/p99 latency, CPU, RSS, recording bytes per request; recorder off vs on; 3 runs each.
 - Hardware: an Oracle Always Free ARM VM (stated exactly) plus the dev laptop for reference.
 
-## 7. Milestones (revised)
+## 7. Status
+
+- **M0 done** (2026-11-07): gallery measured in memory and on Postgres; see [../gallery/README.md](../gallery/README.md).
+- **M1 done** (2026-11-07): recording loops (Selector + Proactor), task registry with eager-task reservation, ring
+  buffer, shims, ASGI middleware with 5xx / exception / `deja.flag()` triggers, `.deja` writer, gallery `--record`.
+  23 tests pass on CPython 3.12 and 3.14. Worst-case overhead (`benchmarks/sched_overhead.py`) ~10–25% on a loaded
+  Windows desktop, noisy; the real measurement is M4 on a quiet Linux VM. Gallery: 124/124 violating trials saved,
+  ~4.4 KB per recording.
+
+## 8. Milestones (revised)
 
 | # | Deliverable | Est. | Exit criteria |
 |---|---|---|---|
@@ -175,7 +191,7 @@ Per loop pass (generalised from spike S3):
 | M4 | Benchmark + results write-up | 1 weekend | S2–S4 measured and published |
 | M5 | `deja show` + per-request breakdown + 3.13/3.15 copies + CI matrix | 1–2 weekends | S5 met; README demo GIF |
 
-## 8. Risks
+## 9. Risks
 
 | Risk | Likelihood | Mitigation |
 |---|---|---|
