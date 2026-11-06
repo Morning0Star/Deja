@@ -27,7 +27,21 @@ replay. Set `DEJA_PG_DSN` to run the same apps against Postgres (tables are crea
 
 Over real HTTP (uvicorn, `--url`): wallet 28/100 (28%).
 
-Postgres variants: written, not yet measured (needs a database; see `DEJA_PG_DSN`).
+Postgres store (postgres:17-alpine in Docker on localhost, same day, 300 trials each):
+
+| App | Buggy | Safe |
+|---|---|---|
+| signup | 143/300 (47.7%) | 0/300 |
+| likes | 238/300 (79.3%) | 0/300 |
+| wallet | 139/300 (46.3%) | 0/300 |
+
+Local database for development (throwaway, localhost only):
+
+```bash
+docker run -d --name deja-pg -e POSTGRES_USER=deja -e POSTGRES_PASSWORD=deja -e POSTGRES_DB=deja \
+  -p 127.0.0.1:55432:5432 postgres:17-alpine
+export DEJA_PG_DSN=postgresql://deja:deja@127.0.0.1:55432/deja
+```
 
 ## Run
 
