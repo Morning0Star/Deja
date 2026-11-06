@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "deja-replay"
+version = "0.0.1"
+description = "Record the real scheduling order of an asyncio app and replay its race conditions deterministically."
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Kushagra Sagar" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+
+[project.scripts]
+deja = "deja.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/deja"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
