@@ -227,8 +227,13 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
         expected = self.schedule.expected_path(i) if i < len(self.schedule) else "(end of recording)"
         ready = [p for p in (self._path_of(h) for h in self._ready) if self._controlled(p)]
         recent = self.trace[-8:]
+        ex = self._default_executor
+        threads = sum(t.is_alive() for t in getattr(ex, "_threads", ())) if ex else 0
+        queued = ex._work_queue.qsize() if ex and hasattr(ex, "_work_queue") else 0
         return (f"replay diverged at step {i} of {len(self.schedule)}: expected {expected}, "
-                f"ready request tasks {ready or 'none'}; last steps {recent}")
+                f"ready request tasks {ready or 'none'}; last steps {recent}; "
+                f"[diag: ready handles {len(self._ready)}, timers {len(self._scheduled)}, "
+                f"executor threads {threads}, queued jobs {queued}, virtual time {self.vt:.3f}]")
 
     def _run(self, handle, path=None):
         if path is not None:
