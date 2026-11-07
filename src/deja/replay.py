@@ -35,24 +35,68 @@ class Divergence(Exception):
 
 
 # ---------------------------------------------------------------------- schedule
+class IOEntry:
+    __slots__ = ("op", "digest", "kind", "value", "yielded", "kids")
+
+    def __init__(self, op, digest, kind, value, yielded, kids):
+        self.op, self.digest, self.kind, self.value, self.yielded, self.kids = op, digest, kind, value, yielded, kids
+
+
 class Schedule:
+    """The part of a recording replay must reproduce.
+
+    I/O calls recorded by adapters are collapsed: every step the task took inside the library (between IO_START
+    and IO_END) is dropped except the last one, which is the step where the app resumed with the result. Reads and
+    child tasks that happened inside the library are dropped too (the library will not run during replay); the
+    number of such children is kept so later child paths stay identical.
+    """
+
     def __init__(self, header: dict, events: list):
         self.header = header
         self.entries: list[tuple] = []  # ("start", rid) | ("step", path)
         self.requests: dict[int, tuple] = {}
         self.responses: dict[int, tuple] = {}
         self.reads: dict[str, collections.deque] = collections.defaultdict(collections.deque)
+        self.io: dict[str, collections.deque] = collections.defaultdict(collections.deque)
+        entries: list = []
+        open_io: dict[str, dict] = {}
+        ignored: set[str] = set()
+
+        def is_ignored(path):
+            return any(path == p or path.startswith(p + ".") for p in ignored)
+
         for e in events:
             code = e[0]
             if code == ev.REQUEST:
-                self.entries.append(("start", e[1]))
+                entries.append(("start", e[1]))
                 self.requests[e[1]] = e
-            elif code == ev.STEP and e[1] and e[1].startswith("q"):
-                self.entries.append(("step", e[1]))
+            elif code == ev.STEP:
+                path = e[1]
+                if not path or not path.startswith("q") or is_ignored(path):
+                    continue
+                if path in open_io:
+                    open_io[path]["steps"].append(len(entries))
+                entries.append(("step", path))
+            elif code == ev.TASK_NEW:
+                path, parent = e[1], e[2]
+                if parent is not None and (parent in open_io or is_ignored(parent)):
+                    if parent in open_io:
+                        open_io[parent]["kids"] += 1
+                    ignored.add(path)
+            elif code == ev.IO_START and e[1] and e[1].startswith("q"):
+                open_io[e[1]] = {"op": e[2], "steps": [], "kids": 0}
+            elif code == ev.IO_END and e[1] in open_io:
+                call = open_io.pop(e[1])
+                for i in call["steps"][:-1]:
+                    entries[i] = None  # library-internal wakeups: replay will not have them
+                self.io[e[1]].append(IOEntry(e[2], e[3], e[4], e[5], bool(call["steps"]), call["kids"]))
             elif code == ev.READ and e[1] and e[1].startswith("q"):
+                if e[1] in open_io or is_ignored(e[1]):
+                    continue
                 self.reads[e[1]].append((e[2], e[3]))
             elif code == ev.RESPONSE:
                 self.responses[e[1]] = (e[2], e[3] if len(e) > 3 else b"")
+        self.entries = [x for x in entries if x is not None]
 
     @classmethod
     def load(cls, path: str) -> "Schedule":
@@ -71,10 +115,14 @@ class ReplayRecorder(Recorder):
     """Same event log as recording (useful for reports), but request scope comes from the harness and reads come
     back from the recording."""
 
+    replaying = True
+
     def __init__(self, schedule: Schedule):
         super().__init__()
         self.schedule = schedule
         self.read_misses: list[tuple] = []
+        self.io_misses: list[str] = []
+        self._io = {k: collections.deque(v) for k, v in schedule.io.items()}
 
     def request_start(self, method, path, headers, body) -> int:
         rid = _replay_rid.get()
@@ -98,6 +146,30 @@ class ReplayRecorder(Recorder):
             return recorded
         self.read_misses.append((path, source))
         return value
+
+
+    async def io_replay(self, path, op, digest, decode):
+        """Answer an adapter call from the recording, suspending exactly when the recorded call suspended."""
+        from . import codec
+
+        queue = self._io.get(path)
+        if not queue:
+            self.io_misses.append(f"{path}: {op} was not called here in the recording")
+            return None
+        entry = queue.popleft()
+        if entry.op != op or entry.digest != digest:
+            self.io_misses.append(f"{path}: recorded {entry.op} but replay called {op}"
+                                  + ("" if entry.op != op else " with different arguments"))
+        if entry.yielded:
+            loop = asyncio.get_running_loop()
+            fut = loop.create_future()
+            loop.call_soon(fut.set_result, None)
+            await fut
+        if entry.kids:
+            self.ids._kids[path] = self.ids._kids.get(path, 0) + entry.kids
+        if entry.kind == "err":
+            raise codec.decode_exc(entry.value)
+        return decode(entry.value)
 
 
 # ---------------------------------------------------------------------- loop
@@ -331,10 +403,11 @@ class ReplayResult:
         self.steps_followed = loop.pos
         self.extra_steps = list(loop.extra)
         self.read_misses = list(loop.deja.read_misses)
+        self.io_misses = list(loop.deja.io_misses)
 
     @property
     def followed(self) -> bool:
-        return self.divergence is None and self.steps_followed == self.steps_expected
+        return self.divergence is None and self.steps_followed == self.steps_expected and not self.io_misses
 
     @property
     def same_responses(self) -> bool:
@@ -345,6 +418,8 @@ class ReplayResult:
                  + (f", {len(self.extra_steps)} extra" if self.extra_steps else "")]
         if self.divergence:
             lines.append("DIVERGED: " + self.divergence)
+        for m in self.io_misses[:5]:
+            lines.append("I/O MISMATCH: " + m)
         for rid in sorted(set(self.recorded) | set(self.replayed)):
             rec, rep = self.recorded.get(rid), self.replayed.get(rid)
             mark = "same" if rec == rep else "DIFFERENT"

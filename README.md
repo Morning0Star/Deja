@@ -6,8 +6,8 @@ Déjà records the real scheduling order of a running asyncio app (which task ra
 what the clock and random number generator said) and replays it on your laptop with a deterministic event loop.
 The bug that only happened when two requests overlapped in production happens again, every time.
 
-> Status: record and replay work for ASGI apps with in-memory state (milestones M0–M2). Database and HTTP-client
-> replay (M3) is next. Not production-ready yet.
+> Status: record and replay work for ASGI apps, including their Postgres (asyncpg), HTTP (httpx) and Redis calls,
+> which replay from the recording with no database or network (milestones M0–M3). Not production-ready yet.
 > Problem and prior art: [docs/DESIGN.md](docs/DESIGN.md) · Architecture and milestones: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
 > Feasibility spikes: [spikes/RESULTS.md](spikes/RESULTS.md) · Race gallery: [gallery/README.md](gallery/README.md)
 
@@ -47,6 +47,10 @@ Acceptance run (`python -m gallery.acceptance --recordings 5 --replays 100`), CP
 Every one of the 3,000 replays per Python version followed the recording step for step. Replaying a recorded double
 charge against the *fixed* app reports a divergence: the lock stops the second purchase from taking its recorded step.
 
+Same run with the apps on **Postgres** (`DEJA_PG_DSN` set while recording): 500/500 and 0/500 for every app on 3.12 and
+3.14, at 8–14 ms per replay, because the database answers come from the recording. Stopping the database container
+before replaying changes nothing: 20/20 replays per app still match.
+
 ## Why
 
 asyncio code races at every `await`. Two requests read the same row, both pass the check, both write. In tests
@@ -56,7 +60,7 @@ actually happened in production and play it back.
 
 ## Still to come
 
-- I/O adapters (M3): replay database and HTTP-client calls from the recording, so replay needs no database or network.
+- More adapters: SQLAlchemy async (prepared statements), asyncpg cursors and `copy`, streaming HTTP, worker threads.
 - A published overhead benchmark on a quiet Linux machine (M4).
 - More Python versions, CI on Linux/macOS/Windows, uvloop support.
 

@@ -51,6 +51,12 @@ class Recorder:
         self.buffer.append((ev.READ, self.current_path(), source, value))
         return value
 
+    def io_start(self, path, op):
+        self.buffer.append((ev.IO_START, path, op))
+
+    def io_end(self, path, op, digest, kind, value):
+        self.buffer.append((ev.IO_END, path, op, digest, kind, value))
+
     def mark(self, label: str = "") -> tuple:
         """Append a marker; ``dump(path, since=marker)`` saves everything from it on."""
         marker = (ev.MARK, label)

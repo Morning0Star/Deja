@@ -187,6 +187,16 @@ Per loop pass (generalised from spike S3):
   all following the recording step for step (~30 ms per replay). Also fixed: query strings were not recorded;
   rebind left stale id entries.
 
+- **M3 done for asyncpg, httpx, redis** (2026-11-07): `deja.codec` (rows, dates, decimals, UUIDs, exceptions,
+  responses), `deja.adapters` (`io_call` records `IO_START`/`IO_END` with the encoded result inside request scope).
+  During replay `asyncpg.create_pool/connect` return fakes; httpx `AsyncClient.send` and redis `execute_command` /
+  pipelines answer from the recording. The schedule collapses all library-internal steps of a call into the single
+  step where the app resumed (and keeps the count of child tasks created inside it), so replay matches step for
+  step without the network. Changed queries are reported as I/O mismatches. Acceptance on Postgres: 1,500/1,500 and
+  0/1,500 on 3.12 and 3.14; replays still match with the database stopped. 32 tests on both versions.
+  **Not covered yet:** SQLAlchemy async (uses asyncpg prepared statements), asyncpg cursors / `copy_*` / listeners,
+  streaming httpx responses, results of `run_in_executor` (worker-thread calls still run live in replay).
+
 ## 8. Milestones (revised)
 
 | # | Deliverable | Est. | Exit criteria |

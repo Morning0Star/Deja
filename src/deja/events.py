@@ -12,6 +12,8 @@
 | ``A`` | request id, status, response body (first 64 KiB) | an HTTP request finished |
 | ``X`` | request id or task path, exception type, message | an exception escaped a request |
 | ``F`` | task path, reason | ``deja.flag()`` was called |
+| ``I`` | task path, op | a recorded I/O call started (adapters) |
+| ``O`` | task path, op, args digest, "ok"/"err", encoded result | that I/O call finished |
 | ``M`` | label | a marker placed by ``Recorder.mark()`` (e.g. the start of a test trial) |
 
 In the in-memory ring buffer a step is stored as a bare ``int`` (the owner's ``id()``) or the string ``"P"``, to keep
@@ -29,3 +31,5 @@ RESPONSE = "A"
 EXCEPTION = "X"
 FLAG = "F"
 MARK = "M"
+IO_START = "I"
+IO_END = "O"

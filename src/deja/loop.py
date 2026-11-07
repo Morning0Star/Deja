@@ -14,7 +14,7 @@ import sys
 import time
 from asyncio import base_events
 
-from . import _compat, shims
+from . import _compat, adapters, shims
 from . import events as ev
 from .recorder import Recorder
 
@@ -32,6 +32,7 @@ class _RecordingMixin:
         super().set_task_factory(self._deja_task_factory)
         shims.install()
         self._deja_shimmed = True
+        self._deja_adapters = adapters.install()
 
     def close(self):
         try:
@@ -40,6 +41,7 @@ class _RecordingMixin:
             if getattr(self, "_deja_shimmed", False):
                 self._deja_shimmed = False
                 shims.uninstall()
+                adapters.uninstall(self._deja_adapters)
 
     # The loop's clock must never go through the time shims (they would record loop internals as app reads).
     def time(self):
