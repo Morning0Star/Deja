@@ -2,6 +2,7 @@
 
     deja show recording.deja
     deja replay recording.deja --app gallery.wallet:create_app [--times 100] [--deadline 10]
+    deja report recording.deja [--app gallery.wallet:create_app --times 20] [-o report.html]
 
 ``--app`` is ``module:attribute``. If the attribute is callable and not itself an ASGI app instance it is called with
 no arguments to build a fresh app (``create_app``); a module-level app object is reused as is.
@@ -77,6 +78,25 @@ def cmd_replay(a) -> int:
     return 0 if followed == a.times else 1
 
 
+def cmd_report(a) -> int:
+    from .report import write_report
+
+    summary = None
+    if a.app:
+        from .replay import Schedule, replay
+
+        factory = _load_factory(a.app)
+        schedule = Schedule.load(a.recording)
+        ok, last = 0, None
+        for _ in range(a.times):
+            last = replay(schedule, factory, deadline_s=a.deadline)
+            ok += last.followed and last.same_responses
+        summary = f"{ok}/{a.times} replays matched the recording" + "\n\n" + last.summary()
+    out = write_report(a.recording, a.out, summary)
+    print(out)
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="deja", description="Record and replay asyncio interleavings.")
     p.add_argument("-V", "--version", action="version", version=f"deja {__version__}")
@@ -90,6 +110,13 @@ def main(argv=None) -> int:
     r.add_argument("--times", type=int, default=1)
     r.add_argument("--deadline", type=float, default=10.0, help="seconds without progress before reporting divergence")
     r.set_defaults(fn=cmd_replay)
+    rp = sub.add_parser("report", help="write an HTML report (optionally replaying the recording too)")
+    rp.add_argument("recording")
+    rp.add_argument("-o", "--out", help="output .html (default: next to the recording)")
+    rp.add_argument("--app", help="module:attribute; when given, replay --times times and include the verdict")
+    rp.add_argument("--times", type=int, default=20)
+    rp.add_argument("--deadline", type=float, default=10.0)
+    rp.set_defaults(fn=cmd_report)
     a = p.parse_args(argv)
     return a.fn(a)
 
