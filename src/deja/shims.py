@@ -37,6 +37,14 @@ def _encode(value):
     return value
 
 
+def _decode(source, value):
+    if source == "uuid.uuid4":
+        return uuid.UUID(value)
+    if source == "os.urandom" and isinstance(value, str):
+        return value.encode("latin-1")
+    return value
+
+
 def _wrap(module, name, fn):
     source = f"{module.__name__}.{name}"
 
@@ -46,7 +54,10 @@ def _wrap(module, name, fn):
         if loop is not None:
             rec = getattr(loop, "deja", None)
             if rec is not None and _current_task(loop) is not None:
-                rec.read(source, _encode(value))
+                encoded = _encode(value)
+                got = rec.read(source, encoded)  # recording returns `encoded`; replay may return the recorded value
+                if got is not encoded:
+                    value = _decode(source, got)
         return value
 
     shim.__wrapped__ = fn

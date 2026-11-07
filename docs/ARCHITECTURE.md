@@ -180,6 +180,13 @@ Per loop pass (generalised from spike S3):
   Windows desktop, noisy; the real measurement is M4 on a quiet Linux VM. Gallery: 124/124 violating trials saved,
   ~4.4 KB per recording.
 
+- **M2 done** (2026-11-07): `deja.replay` (schedule, `ReplayLoop` with virtual clock, ASGI harness with lifespan,
+  divergence report), `deja show` / `deja replay` CLI. Request scope: the middleware re-labels the request task
+  `q{rid}` (children `q{rid}.N`) until the request ends; only request scope is forced, everything else runs FIFO.
+  Acceptance: on 3.12 and 3.14, failing recordings replay as failures 1,500/1,500, passing ones clean 1,500/1,500,
+  all following the recording step for step (~30 ms per replay). Also fixed: query strings were not recorded;
+  rebind left stale id entries.
+
 ## 8. Milestones (revised)
 
 | # | Deliverable | Est. | Exit criteria |

@@ -60,6 +60,20 @@ class TaskRegistry:
         slot = self.reserve(parent)
         return self.release(slot, task)
 
+    def rebind(self, task, path: str) -> str:
+        """Give a live task a new path (request scope: ``q{rid}``); returns the old one.
+
+        Children created afterwards are numbered under the new path. Emits ``on_new`` so recordings map the task's
+        id to the new path from this point on. The weakref that forgets the task is keyed by id, so it still fires.
+        """
+        key = id(task)
+        old = self._paths.get(key) or self.path(task)
+        self._paths[key] = path
+        self._kids[path] = 0
+        if self.on_new is not None:
+            self.on_new(path, None, task)
+        return old
+
     # ------------------------------------------------------------------ lookup
     def path(self, task) -> str:
         path = self._paths.get(id(task))
@@ -94,10 +108,13 @@ class TaskRegistry:
         self._refs[key] = weakref.ref(task, lambda _r, k=key, p=path: self._forget(k, p))
 
     def _forget(self, key, path):
+        # The weakref callback runs while the dying task still owns its id (memory is freed afterwards), so the
+        # entry can be dropped unconditionally, including after rebind() changed the path.
         self._refs.pop(key, None)
-        if self._paths.get(key) == path:
-            del self._paths[key]
+        current = self._paths.pop(key, None)
         self._kids.pop(path, None)
+        if current is not None and current != path:
+            self._kids.pop(current, None)
         if self.on_gone is not None:
             self.on_gone(key)
 

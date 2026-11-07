@@ -27,6 +27,7 @@ class Recorder:
         self._rids = itertools.count()
         self._active: dict[int, tuple] = {}  # request id -> its REQUEST event (start marker)
         self._overlap: dict[int, set] = {}  # request id -> ids of requests active at any time during it
+        self._outer: dict[int, tuple] = {}  # request id -> (task, its path before request scope)
         self.started_at = time.time()
         self.dumps: list[str] = []
         self.loop = None
@@ -45,8 +46,10 @@ class Recorder:
         return self.ids.path(task) if task is not None else None
 
     def read(self, source: str, value):
-        """Record a non-deterministic value read inside a task (called by the shims)."""
+        """Record a non-deterministic value read inside a task (called by the shims). Returns ``value`` unchanged;
+        the replay recorder overrides this to hand back recorded values."""
         self.buffer.append((ev.READ, self.current_path(), source, value))
+        return value
 
     def mark(self, label: str = "") -> tuple:
         """Append a marker; ``dump(path, since=marker)`` saves everything from it on."""
@@ -59,19 +62,31 @@ class Recorder:
 
     # ------------------------------------------------------------------ requests
     def request_start(self, method: str, path: str, headers, body: bytes) -> int:
+        """Open request scope: record the request and re-label the current task ``q{rid}``.
+
+        Replay reproduces request scope only (the ``q`` tasks); everything outside it is environment.
+        """
         rid = next(self._rids)
         hdrs = [[k, "<redacted>" if k.lower() in self.redact else v] for k, v in headers]
-        marker = (ev.REQUEST, rid, self.current_path(), method, path, hdrs, body)
+        task = asyncio.current_task()
+        outer = self.ids.path(task) if task is not None else None
+        marker = (ev.REQUEST, rid, outer, method, path, hdrs, body)
         self.buffer.append(marker)
+        if task is not None:
+            self.ids.rebind(task, f"q{rid}")
+            self._outer[rid] = (task, outer)
         for other in self._active:
             self._overlap[other].add(rid)
         self._overlap[rid] = set(self._active)
         self._active[rid] = marker
         return rid
 
-    def request_end(self, rid: int, status: int):
-        self.buffer.append((ev.RESPONSE, rid, status))
+    def request_end(self, rid: int, status: int, body: bytes = b""):
+        self.buffer.append((ev.RESPONSE, rid, status, body[:65536]))
         self._active.pop(rid, None)
+        task, outer = self._outer.pop(rid, (None, None))
+        if task is not None and outer is not None:
+            self.ids.rebind(task, outer)  # leave request scope
 
     def request_exception(self, rid: int, exc: BaseException):
         self.buffer.append((ev.EXCEPTION, rid, type(exc).__qualname__, str(exc)[:500]))

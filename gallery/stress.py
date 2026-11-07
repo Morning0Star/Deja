@@ -41,7 +41,7 @@ async def trial(client, scenario, stagger_ms):
     return (await client.get(check)).json()
 
 
-async def run(scenario, trials, safe, url, stagger_ms, record_dir=None):
+async def run(scenario, trials, safe, url, stagger_ms, record_dir=None, record_passing=False):
     if url:
         client = httpx.AsyncClient(base_url=url, timeout=30)
         lifespan = None
@@ -67,10 +67,12 @@ async def run(scenario, trials, safe, url, stagger_ms, record_dir=None):
             if r["violated"]:
                 hits += 1
                 example = example or r["detail"]
-                if rec:
-                    os.makedirs(record_dir, exist_ok=True)
-                    rec.dump(os.path.join(record_dir, f"{scenario}-trial{i:04d}.deja"), since=marker,
-                             reason=f"invariant violated: {r['detail']}", scenario=scenario, safe=safe)
+            if rec and (r["violated"] or record_passing):
+                os.makedirs(record_dir, exist_ok=True)
+                kind = "fail" if r["violated"] else "pass"
+                rec.dump(os.path.join(record_dir, f"{scenario}-{kind}-trial{i:04d}.deja"), since=marker,
+                         reason=f"invariant {'violated' if r['violated'] else 'held'}: {r['detail']}",
+                         scenario=scenario, safe=safe, violated=r["violated"])
     finally:
         await client.aclose()
         if lifespan:

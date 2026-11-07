@@ -83,16 +83,22 @@ class DejaMiddleware:
             return await receive()
 
         headers = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope.get("headers", [])]
-        rid = rec.request_start(scope.get("method", ""), scope.get("raw_path", b"").decode("latin-1") or scope["path"],
-                                headers, body if size <= MAX_BODY else body + b"...<truncated>")
+        target = (scope.get("raw_path") or scope["path"].encode()).decode("latin-1")
+        if scope.get("query_string"):
+            target += "?" + scope["query_string"].decode("latin-1")
+        rid = rec.request_start(scope.get("method", ""), target, headers,
+                                body if size <= MAX_BODY else body + b"...<truncated>")
         state = _State(rid)
         token = current_request.set(state)
         status = None
+        out = []
 
         async def send_wrapper(message):
             nonlocal status
             if message["type"] == "http.response.start":
                 status = message["status"]
+            elif message["type"] == "http.response.body" and sum(map(len, out)) < 65536:
+                out.append(message.get("body", b""))
             await send(message)
 
         reason = None
@@ -104,7 +110,7 @@ class DejaMiddleware:
             raise
         finally:
             current_request.reset(token)
-            rec.request_end(rid, status if status is not None else 500)
+            rec.request_end(rid, status if status is not None else 500, b"".join(out))
             if reason is None:
                 if status is not None and status >= 500:
                     reason = f"status {status}"

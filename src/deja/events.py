@@ -8,8 +8,8 @@
 | ``N`` | path, parent path, coroutine name, id | a task was created (id = its ``id()``, used only to resolve steps) |
 | ``G`` | id | a task was garbage-collected (its ``id()`` may be reused after this) |
 | ``R`` | task path, source, value | a non-deterministic read inside a task (time, random, uuid, urandom) |
-| ``Q`` | request id, task path, method, path, headers, body | an HTTP request started |
-| ``A`` | request id, status | an HTTP request finished |
+| ``Q`` | request id, outer task path, method, path, headers, body | an HTTP request started; the task is re-labelled ``q{rid}`` (request scope) until it ends |
+| ``A`` | request id, status, response body (first 64 KiB) | an HTTP request finished |
 | ``X`` | request id or task path, exception type, message | an exception escaped a request |
 | ``F`` | task path, reason | ``deja.flag()`` was called |
 | ``M`` | label | a marker placed by ``Recorder.mark()`` (e.g. the start of a test trial) |
