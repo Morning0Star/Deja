@@ -153,6 +153,8 @@ Per loop pass (generalised from spike S3):
 | D8 | Store `id(owner)` ints in the hot path, resolve at dump | M1 measurement: callback objects in the buffer → GC rescans (+22–40%); ints → ~10–25% worst case on a busy desktop |
 | D9 | Reserve a task's path before constructing it | Eager tasks run their first step inside the constructor; children appeared before the parent was registered (caught by `test_eager_tasks_are_registered`) |
 | D10 | `weakref.ref` callbacks, not `weakref.finalize`, to forget dead tasks | Several times cheaper per task; same effect |
+| D11 | Adapter wrappers are plain functions that return the library call untouched when nothing is recorded | Async wrappers added a coroutine frame per nested call; profiling showed 2.3x more wrapper entries than needed |
+| D12 | Record whether an executor await really suspended (a loop pass ran between start and end) | CPython 3.14.10 can complete `run_in_executor` before the await; assuming "always suspends" stalled replays in CI |
 
 ## 5. Testing strategy
 
@@ -196,6 +198,13 @@ Per loop pass (generalised from spike S3):
   0/1,500 on 3.12 and 3.14; replays still match with the database stopped. 32 tests on both versions.
   **Not covered yet:** SQLAlchemy async (uses asyncpg prepared statements), asyncpg cursors / `copy_*` / listeners,
   streaming httpx responses, results of `run_in_executor` (worker-thread calls still run live in replay).
+
+- **M4 done** (2026-11-08): `benchmarks/run_bench.py` (FastAPI + Postgres + HTTP stub under k6 at fixed rates,
+  recording off vs on, alternating, CPU-pinned on Linux) and CI workflows (`tests.yml` on Linux/Windows/macOS x
+  3.12/3.14 with Postgres+Redis on Linux; `benchmark.yml` on demand). Results in `benchmarks/RESULTS.md`: throughput
+  unchanged, 0 failed requests, about +12% server CPU, +1 to 3 ms at p99, +17 to 23 MB, 0.10 KB per request. One
+  optimisation round (profiling-led) cut Déjà's own time per request by ~40%. Worker-thread results are now recorded
+  too (closes an M3 gap and removed a CI-only replay stall). The 5% CPU target is not met yet (see risks).
 
 ## 8. Milestones (revised)
 
