@@ -1,0 +1,60 @@
+name: Benchmark
+
+# Run from the Actions tab: Benchmark -> Run workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      rates:
+        description: "Request rates to test (req/s, comma separated)"
+        default: "100,250,400"
+      duration:
+        description: "Seconds per measured run"
+        default: "30"
+      reps:
+        description: "Repetitions per rate (median is reported)"
+        default: "3"
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start Postgres
+        run: |
+          docker run -d --name deja-pg -e POSTGRES_USER=deja -e POSTGRES_PASSWORD=deja -e POSTGRES_DB=deja \
+            -p 127.0.0.1:55432:5432 postgres:17-alpine
+          for i in $(seq 1 30); do docker exec deja-pg pg_isready -U deja && break; sleep 1; done
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - uses: grafana/setup-k6-action@v1
+
+      - name: Install
+        run: python -m pip install -e ".[gallery,bench]"
+
+      - name: Machine
+        run: |
+          nproc; lscpu | grep -E 'Model name|^CPU\(s\)'; free -h
+
+      - name: Scheduler worst case (microbenchmark)
+        run: |
+          echo '### Scheduler worst case (tasks that only yield)' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          python benchmarks/sched_overhead.py | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Service overhead (FastAPI + Postgres + HTTP, recording off vs on)
+        env:
+          BENCH_PG_DSN: postgresql://deja:deja@127.0.0.1:55432/deja
+        run: >
+          python benchmarks/run_bench.py --rates "${{ inputs.rates }}" --duration "${{ inputs.duration }}"
+          --reps "${{ inputs.reps }}" --out bench-results.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: bench-results.json
