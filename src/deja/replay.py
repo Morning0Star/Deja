@@ -89,7 +89,8 @@ class Schedule:
                 call = open_io.pop(e[1])
                 for i in call["steps"][:-1]:
                     entries[i] = None  # library-internal wakeups: replay will not have them
-                self.io[e[1]].append(IOEntry(e[2], e[3], e[4], e[5], bool(call["steps"]), call["kids"]))
+                yielded = bool(call["steps"]) or e[2] == "executor"
+                self.io[e[1]].append(IOEntry(e[2], e[3], e[4], e[5], yielded, call["kids"]))
             elif code == ev.READ and e[1] and e[1].startswith("q"):
                 if e[1] in open_io or is_ignored(e[1]):
                     continue
@@ -190,6 +191,24 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
 
     def time(self):
         return self.vt
+
+    def run_in_executor(self, executor, func, *args):
+        from . import adapters, codec
+
+        path = self.deja.current_path()
+        queue = self.deja._io.get(path) if path else None
+        if not queue or queue[0].op != adapters.EXECUTOR_OP:
+            return asyncio.SelectorEventLoop.run_in_executor(self, executor, func, *args)  # not recorded: run live
+        entry = queue.popleft()
+        key = (getattr(func, "__qualname__", None) or type(func).__name__, args)
+        if entry.digest != adapters.digest(key):
+            self.deja.io_misses.append(f"{path}: worker-thread call {key[0]} with different arguments")
+        fut = self.create_future()
+        if entry.kind == "err":
+            self.call_soon(fut.set_exception, codec.decode_exc(entry.value))
+        else:
+            self.call_soon(fut.set_result, codec.decode(entry.value))
+        return fut
 
     # ------------------------------------------------------------------ classification
     def _path_of(self, handle):

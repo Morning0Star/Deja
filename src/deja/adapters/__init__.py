@@ -21,6 +21,7 @@ _get_loop = asyncio._get_running_loop
 _inside = contextvars.ContextVar("deja_inside_io", default=False)  # suppress nested adapter calls
 
 KNOWN = ("asyncpg", "httpx", "redis")
+EXECUTOR_OP = "executor"  # loop.run_in_executor, recorded by the loop itself
 _lock = threading.Lock()
 _installed: dict[str, int] = {}
 

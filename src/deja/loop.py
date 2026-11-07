@@ -14,7 +14,7 @@ import sys
 import time
 from asyncio import base_events
 
-from . import _compat, adapters, shims
+from . import _compat, adapters, codec, shims
 from . import events as ev
 from .recorder import Recorder
 
@@ -64,6 +64,33 @@ class _RecordingMixin:
         finally:
             ids.release(slot, task)
         return task
+
+    # ------------------------------------------------------------------ worker-thread calls
+    def run_in_executor(self, executor, func, *args):
+        """Record what a worker-thread call returned (inside request scope), so replay needs no real threads.
+
+        The function's side effects do not happen during replay; only its return value (or exception) comes back.
+        """
+        fut = super().run_in_executor(executor, func, *args)
+        rec = self.deja
+        if getattr(rec, "replaying", False) or adapters._inside.get():
+            return fut
+        path = rec.current_path()
+        if path is None or not path.startswith("q"):
+            return fut
+        key = (getattr(func, "__qualname__", None) or type(func).__name__, args)
+        rec.io_start(path, adapters.EXECUTOR_OP)
+
+        def done(f):
+            if f.cancelled():
+                rec.io_end(path, adapters.EXECUTOR_OP, key, "err", {"__t": "exc", "type": "asyncio:CancelledError", "msg": ""})
+            elif f.exception() is not None:
+                rec.io_end(path, adapters.EXECUTOR_OP, key, "err", codec.encode_exc(f.exception()))
+            else:
+                rec.io_end(path, adapters.EXECUTOR_OP, key, "ok", codec.encode(f.result()))
+
+        fut.add_done_callback(done)
+        return fut
 
     # ------------------------------------------------------------------ the hook
     def _run_once(self):

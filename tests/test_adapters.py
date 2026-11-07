@@ -173,3 +173,31 @@ def test_changed_query_is_reported(tmp_path):
     r = replay(path, changed, deadline_s=3)
     assert not r.followed
     assert "I/O MISMATCH" in r.summary()
+
+
+# ---------------------------------------------------------------------- worker threads (run_in_executor)
+def test_worker_thread_results_replay_without_running_threads(tmp_path):
+    calls = []
+
+    def slow_lookup(x):
+        calls.append(x)
+        return {"x": x, "n": random.randint(1, 10_000)}
+
+    def factory():
+        app = FastAPI()
+
+        @app.get("/lookup")
+        async def lookup():
+            r = await asyncio.get_running_loop().run_in_executor(None, slow_lookup, 7)
+            return r
+
+        return app
+
+    path, responses = record_requests(factory, [("GET", "/lookup")], tmp_path)
+    recorded = responses[0].json()
+    assert calls == [7]
+    for _ in range(5):
+        r = replay(path, factory, deadline_s=5)
+        assert r.followed and r.same_responses, r.summary()
+        assert json.loads(next(iter(r.replayed.values()))[1]) == recorded
+    assert calls == [7], "replay must not run the worker-thread function"
