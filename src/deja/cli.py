@@ -81,7 +81,7 @@ def cmd_replay(a) -> int:
 def cmd_report(a) -> int:
     from .report import write_report
 
-    summary = None
+    verdict = None
     if a.app:
         from .replay import Schedule, replay
 
@@ -91,8 +91,9 @@ def cmd_report(a) -> int:
         for _ in range(a.times):
             last = replay(schedule, factory, deadline_s=a.deadline)
             ok += last.followed and last.same_responses
-        summary = f"{ok}/{a.times} replays matched the recording" + "\n\n" + last.summary()
-    out = write_report(a.recording, a.out, summary)
+        verdict = {"times": a.times, "matched": ok,
+                   "summary": f"{ok}/{a.times} replays matched the recording" + "\n\n" + last.summary()}
+    out = write_report(a.recording, a.out, verdict)
     print(out)
     return 0
 
