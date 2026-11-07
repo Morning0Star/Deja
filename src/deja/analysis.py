@@ -233,7 +233,10 @@ def analyze(header: dict, events: list) -> dict:
 
 
 def _absent(v):
-    return v in (None, False, 0, [], "", ()) or (isinstance(v, list) and not v)
+    """'Nothing found': None, False, or an empty result. Zero is a value (a counter at 0), not absence."""
+    if v is None or v is False:
+        return True
+    return isinstance(v, (list, tuple, str, dict)) and len(v) == 0
 
 
 def _conflicts(touches):
