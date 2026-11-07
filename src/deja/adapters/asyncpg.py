@@ -14,7 +14,7 @@ import asyncpg.connection
 import asyncpg.pool
 import asyncpg.transaction
 
-from . import io_call, patch, replaying
+from . import io_call, passthrough, patch, replaying
 
 QUERY_METHODS = ("execute", "executemany", "fetch", "fetchrow", "fetchval")
 DEFAULTS = {"execute": "", "executemany": None, "fetch": list, "fetchrow": None, "fetchval": None}
@@ -24,8 +24,10 @@ _undo = []
 
 def _wrap_query(name):
     def make(original):
-        async def method(self, query, *args, **kwargs):
-            return await io_call(f"pg.{name}", (name, query, args), lambda: original(self, query, *args, **kwargs))
+        def method(self, query, *args, **kwargs):  # plain function: returns the awaitable, adds no frame
+            if passthrough():
+                return original(self, query, *args, **kwargs)
+            return io_call(f"pg.{name}", (name, query, args), lambda: original(self, query, *args, **kwargs))
 
         method.__name__ = name
         method.__wrapped__ = original
@@ -36,8 +38,10 @@ def _wrap_query(name):
 
 def _wrap_simple(op):
     def make(original):
-        async def method(self, *args, **kwargs):
-            return await io_call(op, (op,), lambda: original(self, *args, **kwargs))
+        def method(self, *args, **kwargs):
+            if passthrough():
+                return original(self, *args, **kwargs)
+            return io_call(op, (op,), lambda: original(self, *args, **kwargs))
 
         method.__wrapped__ = original
         return method

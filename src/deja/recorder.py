@@ -14,7 +14,13 @@ import time
 from . import events as ev
 from .ids import TaskRegistry
 
-DEFAULT_MAX_EVENTS = 500_000
+DEFAULT_MAX_EVENTS = 200_000  # ~15-20k requests of history for a typical API; memory stays in the tens of MB
+
+
+def _digest(key):
+    from .adapters import digest
+
+    return key if isinstance(key, str) else digest(key)
 
 
 class Recorder:
@@ -126,6 +132,8 @@ class Recorder:
                 out.append(item[:4])
             elif item[0] == ev.TASK_GONE:
                 idmap.pop(item[1], None)
+            elif item[0] == ev.IO_END:  # the args digest is computed here, off the hot path
+                out.append((item[0], item[1], item[2], _digest(item[3]), item[4], item[5]))
             else:
                 out.append(item)
         return out

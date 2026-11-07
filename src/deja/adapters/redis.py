@@ -6,23 +6,27 @@ answer from the recording.
 
 import redis.asyncio.client as rclient
 
-from . import io_call, patch
+from . import io_call, passthrough, patch
 
 _undo = []
 
 
 def install():
     def make_cmd(original):
-        async def execute_command(self, *args, **options):
-            return await io_call("redis.cmd", ("cmd", args), lambda: original(self, *args, **options))
+        def execute_command(self, *args, **options):
+            if passthrough():
+                return original(self, *args, **options)
+            return io_call("redis.cmd", ("cmd", args), lambda: original(self, *args, **options))
 
         execute_command.__wrapped__ = original
         return execute_command
 
     def make_pipe(original):
-        async def execute(self, raise_on_error=True):
+        def execute(self, raise_on_error=True):
+            if passthrough():
+                return original(self, raise_on_error)
             stack = [c[0] if isinstance(c, tuple) else c for c in getattr(self, "command_stack", [])]
-            return await io_call("redis.pipeline", ("pipe", repr(stack)), lambda: original(self, raise_on_error))
+            return io_call("redis.pipeline", ("pipe", repr(stack)), lambda: original(self, raise_on_error))
 
         execute.__wrapped__ = original
         return execute

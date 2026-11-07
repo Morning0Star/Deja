@@ -15,6 +15,8 @@ import threading
 import time
 import uuid
 
+from .adapters import _inside as _inside_io
+
 _get_loop = asyncio._get_running_loop  # returns None instead of raising when no loop runs in this thread
 _current_task = asyncio.current_task
 
@@ -50,6 +52,8 @@ def _wrap(module, name, fn):
 
     def shim(*args, **kwargs):
         value = fn(*args, **kwargs)
+        if _inside_io.get():  # a library's own clock read inside a recorded I/O call: not part of the app's story
+            return value
         loop = _get_loop()
         if loop is not None:
             rec = getattr(loop, "deja", None)

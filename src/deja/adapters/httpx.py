@@ -8,7 +8,7 @@ import base64
 
 import httpx
 
-from . import io_call, patch
+from . import io_call, passthrough, patch
 
 _undo = []
 
@@ -33,14 +33,14 @@ def _decode(v):
 
 def install():
     def make(original):
-        async def send(self, request, *args, stream=False, **kwargs):
-            if stream:
-                return await original(self, request, *args, stream=stream, **kwargs)
+        def send(self, request, *args, stream=False, **kwargs):
+            if stream or passthrough():
+                return original(self, request, *args, stream=stream, **kwargs)
             try:
                 body = request.content
             except Exception:
                 body = None
-            return await io_call(
+            return io_call(
                 "http.send", (request.method, str(request.url), body),
                 lambda: original(self, request, *args, stream=stream, **kwargs),
                 encode=_encode, decode=_decode,

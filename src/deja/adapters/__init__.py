@@ -43,6 +43,15 @@ def _context():
     return rec, (path if path is not None and path.startswith("q") else None)
 
 
+def passthrough() -> bool:
+    """True when a wrapper can hand back the library call untouched (no extra coroutine frame):
+    nested inside a recorded call, or not running on a Déjà loop at all."""
+    if _inside.get():
+        return True
+    loop = _get_loop()
+    return loop is None or getattr(loop, "deja", None) is None
+
+
 def replaying() -> bool:
     loop = _get_loop()
     return getattr(getattr(loop, "deja", None), "replaying", False)
@@ -54,6 +63,8 @@ async def io_call(op: str, key, real, *, encode=codec.encode, decode=codec.decod
     ``real`` is a zero-argument coroutine function doing the actual call. ``key`` feeds the argument digest that
     replay checks. ``default`` is returned for out-of-scope calls during replay when the real library is faked.
     """
+    if _inside.get():  # nested call inside a recorded one (pool -> connection -> acquire): cheapest possible exit
+        return await real()
     rec, path = _context()
     if rec is None:
         return await real()
@@ -68,11 +79,11 @@ async def io_call(op: str, key, real, *, encode=codec.encode, decode=codec.decod
     try:
         result = await real()
     except BaseException as exc:
-        rec.io_end(path, op, digest(key), "err", codec.encode_exc(exc))
+        rec.io_end(path, op, key, "err", codec.encode_exc(exc))
         raise
     finally:
         _inside.reset(token)
-    rec.io_end(path, op, digest(key), "ok", encode(result))
+    rec.io_end(path, op, key, "ok", encode(result))
     return result
 
 
