@@ -12,8 +12,9 @@ Recording (M1):
 
 __version__ = "0.0.1"
 
+from .annotate import labels, touch  # noqa: E402
 from .asgi import DejaMiddleware, flag  # noqa: E402
 from .loop import recording_loop  # noqa: E402
 from .recorder import Recorder  # noqa: E402
 
-__all__ = ["DejaMiddleware", "Recorder", "flag", "recording_loop", "__version__"]
+__all__ = ["DejaMiddleware", "Recorder", "flag", "labels", "recording_loop", "touch", "__version__"]

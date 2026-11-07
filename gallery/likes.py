@@ -8,6 +8,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+import deja
+
 from . import _io, _pg
 
 
@@ -21,12 +23,14 @@ class MemoryStore:
 
     async def get(self):
         await _io.io()
+        deja.touch("post.likes", "read", self.likes)
         return self.likes
 
     async def put(self, n):
         await _io.io()
         self.likes = n
         self.accepted += 1
+        deja.touch("post.likes", "write", n)
 
     async def state(self):
         return self.likes, self.accepted

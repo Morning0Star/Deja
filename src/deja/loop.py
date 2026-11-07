@@ -19,6 +19,7 @@ from . import events as ev
 from .recorder import Recorder
 
 _monotonic = time.monotonic  # captured before shims patch time.monotonic
+_perf_ns = time.perf_counter_ns  # one read per loop pass gives the report a real time axis
 _Task = asyncio.Task
 
 
@@ -146,7 +147,7 @@ class _RecordingMixin:
         # which matters: holding 100k+ callback objects made the GC scan the buffer repeatedly (+22-40%).
         # Recorder.events() maps ids back to task paths with TASK_NEW / TASK_GONE events.
         append = self.deja.buffer.append
-        append((ev.BATCH, ntodo))
+        append((ev.BATCH, ntodo, _perf_ns()))
         ready = self._ready
         plumb = ev.PLUMB
         if not self._debug:

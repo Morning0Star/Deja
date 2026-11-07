@@ -95,7 +95,7 @@ def test_flag_and_reads_carry_the_task_path():
         rec.read("time.time", 123.0)
 
     _, rec = run(main)
-    assert (ev.FLAG, "r0", "invariant broken") in rec.events()
+    assert any(e[:3] == (ev.FLAG, "r0", "invariant broken") for e in rec.events())
     assert (ev.READ, "r0", "time.time", 123.0) in rec.events()
 
 

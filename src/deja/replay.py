@@ -135,7 +135,7 @@ class ReplayRecorder(Recorder):
         return rid
 
     def request_end(self, rid, status, body=b""):
-        self.buffer.append((ev.RESPONSE, rid, status, body[:65536]))
+        self.buffer.append((ev.RESPONSE, rid, status, body[:65536], None))
 
     def forget_request(self, rid):
         pass

@@ -14,6 +14,7 @@
 | ``F`` | task path, reason | ``deja.flag()`` was called |
 | ``I`` | task path, op | a recorded I/O call started (adapters) |
 | ``O`` | task path, op, args digest, "ok"/"err", encoded result | that I/O call finished |
+| ``T`` | task path, resource, "read"/"write", value | app-reported access to in-memory state (``deja.touch``) |
 | ``M`` | label | a marker placed by ``Recorder.mark()`` (e.g. the start of a test trial) |
 
 In the in-memory ring buffer a step is stored as a bare ``int`` (the owner's ``id()``) or the string ``"P"``, to keep
@@ -30,6 +31,7 @@ REQUEST = "Q"
 RESPONSE = "A"
 EXCEPTION = "X"
 FLAG = "F"
+TOUCH = "T"
 MARK = "M"
 IO_START = "I"
 IO_END = "O"

@@ -9,6 +9,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+import deja
+
 from . import _io, _pg
 
 START = 100
@@ -34,12 +36,14 @@ class MemoryStore:
 
     async def get_balance(self):
         await _io.io()
+        deja.touch("wallet.balance", "read", self.balance)
         return self.balance
 
     async def deduct(self, before, amount):
         await _io.io()
         self.balance = before - amount
         self.charged += amount
+        deja.touch("wallet.balance", "write", self.balance)
 
     async def state(self):
         return self.balance, self.charged
@@ -84,6 +88,8 @@ def create_app(safe: bool = False) -> FastAPI:
         yield
 
     app = FastAPI(lifespan=lifespan)
+    deja.labels({"POST /purchase": "purchase", "wallet.balance": "the wallet balance",
+                 "gallery_wallet[id=1]": "the wallet balance"})
 
     async def _purchase(amount):
         balance = await store.get_balance()

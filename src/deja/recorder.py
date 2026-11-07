@@ -14,7 +14,38 @@ import time
 from . import events as ev
 from .ids import TaskRegistry
 
+_now = time.perf_counter_ns  # bound before the shims patch anything; time.perf_counter_ns is never shimmed
+
 DEFAULT_MAX_EVENTS = 200_000  # ~15-20k requests of history for a typical API; memory stays in the tens of MB
+
+
+LABELS: dict[str, str] = {}  # friendly names for routes, resources and calls (deja.labels)
+
+
+def _detail(op, key):
+    """Readable details of an I/O call for reports: the SQL and parameters, the HTTP target, the Redis command."""
+    from .codec import encode
+
+    try:
+        if op.startswith("pg.") and isinstance(key, tuple) and len(key) == 3:
+            _, query, args = key
+            return {"sql": str(query)[:4000], "params": [encode(a) for a in list(args)[:50]]}
+        if op == "http.send" and isinstance(key, tuple) and len(key) == 3:
+            method, url, body = key
+            if isinstance(body, (bytes, bytearray)):
+                body = bytes(body[:2000]).decode("utf-8", "replace")
+            return {"method": method, "url": url, "body": body}
+        if op == "redis.cmd" and isinstance(key, tuple):
+            return {"args": [str(a)[:200] for a in list(key[1])[:20]]}
+        if op == "redis.pipeline" and isinstance(key, tuple):
+            return {"commands": str(key[1])[:2000]}
+        if op == "executor" and isinstance(key, tuple):
+            return {"function": key[0], "args": repr(key[1])[:500]}
+        if isinstance(key, tuple) and len(key) == 1:
+            return {}
+        return {"key": repr(key)[:500]}
+    except Exception:
+        return {}
 
 
 def _digest(key):
@@ -58,10 +89,16 @@ class Recorder:
         return value
 
     def io_start(self, path, op):
-        self.buffer.append((ev.IO_START, path, op))
+        self.buffer.append((ev.IO_START, path, op, _now()))
 
     def io_end(self, path, op, digest, kind, value):
-        self.buffer.append((ev.IO_END, path, op, digest, kind, value))
+        self.buffer.append((ev.IO_END, path, op, digest, kind, value, _now()))
+
+    def touch(self, resource: str, kind: str, value=None):
+        """App-reported access to in-memory state (``deja.touch``): kind is "read" or "write"."""
+        from .codec import encode
+
+        self.buffer.append((ev.TOUCH, self.current_path(), str(resource), kind, encode(value), _now()))
 
     def mark(self, label: str = "") -> tuple:
         """Append a marker; ``dump(path, since=marker)`` saves everything from it on."""
@@ -70,7 +107,7 @@ class Recorder:
         return marker
 
     def flag(self, reason: str = ""):
-        self.buffer.append((ev.FLAG, self.current_path(), reason))
+        self.buffer.append((ev.FLAG, self.current_path(), reason, _now()))
 
     # ------------------------------------------------------------------ requests
     def request_start(self, method: str, path: str, headers, body: bytes) -> int:
@@ -82,7 +119,7 @@ class Recorder:
         hdrs = [[k, "<redacted>" if k.lower() in self.redact else v] for k, v in headers]
         task = asyncio.current_task()
         outer = self.ids.path(task) if task is not None else None
-        marker = (ev.REQUEST, rid, outer, method, path, hdrs, body)
+        marker = (ev.REQUEST, rid, outer, method, path, hdrs, body, _now())
         self.buffer.append(marker)
         if task is not None:
             self.ids.rebind(task, f"q{rid}")
@@ -94,7 +131,7 @@ class Recorder:
         return rid
 
     def request_end(self, rid: int, status: int, body: bytes = b""):
-        self.buffer.append((ev.RESPONSE, rid, status, body[:65536]))
+        self.buffer.append((ev.RESPONSE, rid, status, body[:65536], _now()))
         self._active.pop(rid, None)
         task, outer = self._outer.pop(rid, (None, None))
         if task is not None and outer is not None:
@@ -132,8 +169,9 @@ class Recorder:
                 out.append(item[:4])
             elif item[0] == ev.TASK_GONE:
                 idmap.pop(item[1], None)
-            elif item[0] == ev.IO_END:  # the args digest is computed here, off the hot path
-                out.append((item[0], item[1], item[2], _digest(item[3]), item[4], item[5]))
+            elif item[0] == ev.IO_END:  # digest and readable details are computed here, off the hot path
+                out.append((item[0], item[1], item[2], _digest(item[3]), item[4], item[5],
+                            item[6] if len(item) > 6 else None, _detail(item[2], item[3])))
             else:
                 out.append(item)
         return out
@@ -162,6 +200,8 @@ class Recorder:
             "loop": type(loop).__name__ if loop is not None else None,
             "started_at": self.started_at,
             "events_capacity": self.buffer.maxlen,
+            "labels": dict(LABELS),
+            "clock": "perf_counter_ns",
         }
 
     def since(self, marker: tuple) -> list:

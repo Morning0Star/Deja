@@ -9,6 +9,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+import deja
+
 from . import _io, _pg
 
 
@@ -25,11 +27,14 @@ class MemoryStore:
 
     async def exists(self, name):
         await _io.io()
-        return name in self.users
+        found = name in self.users
+        deja.touch(f"users[username={name}]", "read", found)
+        return found
 
     async def insert(self, name):
         await _io.io()
         self.users.append(name)
+        deja.touch(f"users[username={name}]", "write", name)
 
     async def count(self, name):
         return self.users.count(name)
