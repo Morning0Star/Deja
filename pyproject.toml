@@ -10,6 +10,21 @@ readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "Kushagra Sagar" }]
 dependencies = []
+keywords = ["asyncio", "race condition", "record replay", "deterministic replay", "debugging", "fastapi", "asgi"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Debuggers",
+    "Topic :: Software Development :: Testing",
+]
+
+[project.urls]
+Repository = "https://github.com/Morning0Star/Deja"
+Documentation = "https://github.com/Morning0Star/Deja#readme"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "redis>=5"]
