@@ -70,6 +70,9 @@ class Schedule:
             if code == ev.REQUEST:
                 entries.append(("start", e[1]))
                 self.requests[e[1]] = e
+            elif code == ev.BATCH:
+                for call in open_io.values():
+                    call["passes"] += 1
             elif code == ev.STEP:
                 path = e[1]
                 if not path or not path.startswith("q") or is_ignored(path):
@@ -84,12 +87,13 @@ class Schedule:
                         open_io[parent]["kids"] += 1
                     ignored.add(path)
             elif code == ev.IO_START and e[1] and e[1].startswith("q"):
-                open_io[e[1]] = {"op": e[2], "steps": [], "kids": 0}
+                open_io[e[1]] = {"op": e[2], "steps": [], "kids": 0, "passes": 0}
             elif code == ev.IO_END and e[1] in open_io:
                 call = open_io.pop(e[1])
                 for i in call["steps"][:-1]:
                     entries[i] = None  # library-internal wakeups: replay will not have them
-                yielded = bool(call["steps"]) or e[2] == "executor"
+                # library calls: suspended iff the task stepped inside; executor calls: iff the loop ran a pass
+                yielded = bool(call["steps"]) or (e[2] == "executor" and call["passes"] > 0)
                 self.io[e[1]].append(IOEntry(e[2], e[3], e[4], e[5], yielded, call["kids"]))
             elif code == ev.READ and e[1] and e[1].startswith("q"):
                 if e[1] in open_io or is_ignored(e[1]):
@@ -205,9 +209,13 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
             self.deja.io_misses.append(f"{path}: worker-thread call {key[0]} with different arguments")
         fut = self.create_future()
         if entry.kind == "err":
-            self.call_soon(fut.set_exception, codec.decode_exc(entry.value))
+            resolve, value = fut.set_exception, codec.decode_exc(entry.value)
         else:
-            self.call_soon(fut.set_result, codec.decode(entry.value))
+            resolve, value = fut.set_result, codec.decode(entry.value)
+        if entry.yielded:
+            self.call_soon(resolve, value)  # the recorded await suspended: resolve on a later pass
+        else:
+            resolve(value)  # the recorded future was already done: the await must not suspend either
         return fut
 
     # ------------------------------------------------------------------ classification

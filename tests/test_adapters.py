@@ -176,10 +176,17 @@ def test_changed_query_is_reported(tmp_path):
 
 
 # ---------------------------------------------------------------------- worker threads (run_in_executor)
-def test_worker_thread_results_replay_without_running_threads(tmp_path):
+@pytest.mark.parametrize("delay", [0, 0.05], ids=["instant", "slow"])
+def test_worker_thread_results_replay_without_running_threads(tmp_path, delay):
+    """Instant functions may finish before the await (no suspension on newer CPython); slow ones always suspend.
+    Both shapes must replay step for step without running the function."""
+    import time as _t
+
     calls = []
 
     def slow_lookup(x):
+        if delay:
+            _t.sleep(delay)
         calls.append(x)
         return {"x": x, "n": random.randint(1, 10_000)}
 

@@ -89,7 +89,10 @@ class _RecordingMixin:
             else:
                 rec.io_end(path, adapters.EXECUTOR_OP, key, "ok", codec.encode(f.result()))
 
-        fut.add_done_callback(done)
+        if fut.done():  # completed before we returned: the caller's await will not suspend
+            done(fut)
+        else:
+            fut.add_done_callback(done)
         return fut
 
     # ------------------------------------------------------------------ the hook
