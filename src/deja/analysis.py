@@ -862,13 +862,15 @@ def _label(text, labels):
 
 
 def _req_label(req, labels):
+    if req.get("method") == "JOB":
+        return _label(f"job {req['path']}", labels)
     if req.get("method") == "WS":
         return _label(f"WebSocket {req['path'].split('?')[0]}", labels)
     return _label(f"{req['method']} {req['path'].split('?')[0]}", labels)
 
 
 def _noun(req):
-    return "connection" if req.get("method") == "WS" else "request"
+    return {"WS": "connection", "JOB": "job"}.get(req.get("method"), "request")
 
 
 def _story(conflicts, requests, names, header, labels):
@@ -884,6 +886,7 @@ def _story(conflicts, requests, names, header, labels):
     if what_a == what_b:
         noun = _noun(ra)
         who = (f"Two connections to {ra['path'].split('?')[0]} ({A} and {B})" if noun == "connection"
+               else f"Two {ra['path']} jobs ({A} and {B})" if noun == "job"
                else f"Two {what_a} requests ({A} and {B})")
     else:
         who = f"{_noun(ra).capitalize()} {A} ({what_a}) and {_noun(rb)} {B} ({what_b})"

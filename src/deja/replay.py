@@ -797,7 +797,11 @@ def replay(recording, app_factory, deadline_s: float = 10.0, track: bool = True)
     schedule = recording if isinstance(recording, Schedule) else Schedule.load(recording)
     loop = ReplayLoop(schedule, deadline_s=deadline_s)
     app = app_factory()
-    if type(app).__module__.startswith("aiohttp."):
+    if isinstance(app, dict):  # handlers of deja.scope() jobs
+        from .scope import JobHarness
+
+        harness = JobHarness(loop, app)
+    elif type(app).__module__.startswith("aiohttp."):
         from .aiohttp_web import AiohttpHarness
 
         harness = AiohttpHarness(loop, app)
@@ -810,12 +814,16 @@ def replay(recording, app_factory, deadline_s: float = 10.0, track: bool = True)
     async def drive():
         await harness.startup()
         from .autotrack import Rules, prepare
+
+        target = app
+        if isinstance(app, dict):  # jobs: follow the handlers' code
+            target = type("Jobs", (), {"routes": [type("R", (), {"endpoint": h})() for h in app.values()]})()
         from .source import changed
 
         # as the middleware does on the first request: worker threads are ordered by tracked accesses, and the
         # app's clock names must point at the recording wrappers to get the recorded values back
         rules = (schedule.header.get("catalog") or {}).get("track") or {}
-        _, current = prepare(app, track and rules.get("on", True),
+        _, current = prepare(target, track and rules.get("on", True),
                              Rules(rules.get("skip"), rules.get("only")))
         recorded = (schedule.header.get("catalog") or {}).get("source") or {}
         loop.code_changed = changed(recorded, current) if recorded else []

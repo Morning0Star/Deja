@@ -241,6 +241,13 @@ class _Reach:
             return self._methods(v)
         if _is_app_object(v):
             return self._methods(type(v))
+        if isinstance(v, (dict, list, tuple)) and len(v) <= 200:  # a table of handlers: {"orders": handle_order}
+            out = []
+            for x in (v.values() if isinstance(v, dict) else v):
+                f = _function(x) if callable(x) else None
+                if f is not None:
+                    out.append(f)
+            return out
         f = _function(v)
         return [f] if f is not None else []
 
