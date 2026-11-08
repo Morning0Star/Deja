@@ -157,6 +157,16 @@ def call_touches(io: dict, kinds: dict | None = None) -> list[dict]:
         for c in d["commands"]:
             out += _redis_touches(c)
         return out
+    if op in ("grpc.call", "grpc.stream") and d.get("method"):
+        import fnmatch
+
+        res = f"grpc {d['method']}"
+        kind = next((v for k, v in (kinds or {}).items() if fnmatch.fnmatchcase(res, k)), None)
+        if kind == "ignore":
+            return []
+        verb = d["method"].rsplit("/", 1)[-1]
+        guess = "read" if verb.startswith(("Get", "List", "Read", "Find", "Search", "Describe", "Check", "Watch")) else "write"
+        return [{"resource": res, "kind": kind or guess}]
     if op == "executor" and d.get("function"):
         return [{"resource": f"worker:{d['function']}", "kind": "call"}]
     return []
@@ -165,6 +175,8 @@ def call_touches(io: dict, kinds: dict | None = None) -> list[dict]:
 # ---------------------------------------------------------------------- helpers
 def short(value, limit=60):
     """One-line human form of an encoded result."""
+    if isinstance(value, dict) and value.get("__t") == "grpc":
+        return "gRPC response"
     if isinstance(value, dict) and value.get("__t") in ("httpx", "aiohttp"):
         return f"HTTP {value.get('status')}"
     if isinstance(value, dict) and value.get("__t") == "exc":

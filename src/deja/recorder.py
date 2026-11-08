@@ -56,6 +56,8 @@ def _detail(op, key):
             what = text if text is not None else (f"<{len(data)} bytes>" if data is not None else
                                                    f"close {code}" if kind == "websocket.close" else kind)
             return {"message": str(what)[:2000]}
+        if op in ("grpc.call", "grpc.stream") and isinstance(key, tuple) and len(key) == 3:
+            return {"method": key[1], "request_bytes": len(key[2] or b"")}
         if op == "executor" and isinstance(key, tuple):
             return {"function": key[0], "args": repr(key[1])[:500]}
         if isinstance(key, tuple) and len(key) == 1:

@@ -116,6 +116,8 @@ def decode(v):
         return FakeRecord(v["k"], [decode(i) for i in x])
     if t == "repr":
         return x
+    if t == "grpc":
+        return base64.b64decode(v["b64"])
     if t == "dbapi":  # a DB-API driver's result (adapters._dbapi), as the report reads it: rows with column names
         if v.get("rows") is None:
             return v.get("status")
@@ -135,10 +137,24 @@ def decode(v):
 
 def encode_exc(exc: BaseException) -> dict:
     cls = type(exc)
-    return {"__t": "exc", "type": f"{cls.__module__}:{cls.__qualname__}", "msg": str(exc)}
+    out = {"__t": "exc", "type": f"{cls.__module__}:{cls.__qualname__}", "msg": str(exc)}
+    if cls.__module__.startswith("grpc") and callable(getattr(exc, "code", None)):  # status code and details
+        try:
+            out["grpc"] = [exc.code().name, exc.details()]
+        except Exception:
+            pass
+    return out
 
 
 def decode_exc(v: dict) -> BaseException:
+    if v.get("grpc"):
+        try:
+            import grpc
+            from grpc.aio import AioRpcError, Metadata
+
+            return AioRpcError(grpc.StatusCode[v["grpc"][0]], Metadata(), Metadata(), details=v["grpc"][1])
+        except Exception:
+            pass
     module, _, qualname = v["type"].partition(":")
     try:
         obj = importlib.import_module(module)
