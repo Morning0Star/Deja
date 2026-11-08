@@ -23,11 +23,16 @@ What it can't see: state held only by library objects, state reached through ``g
 objects inside containers (``accounts[7].balance``: the read of ``accounts[7]`` is reported, the attribute is
 not). ``deja.track`` and ``deja.touch`` cover those.
 
-Pass ``DejaMiddleware(app, track=False)`` to switch this off.
+Pass ``DejaMiddleware(app, track=False)`` to switch this off, or choose what is tracked with patterns (``fnmatch``
+wildcards) matched against the name (``store.cache``, ``services.*``) or the class (``myapp.models.Account``):
+``DejaMiddleware(app, track_skip=["*.cache", "myapp.clients.*"])`` leaves those alone, ``track_only=[...]`` tracks
+only those. Use it for objects whose class must not be swapped (code that checks ``type(x) is Cls``). The patterns
+are saved in the recording and replay applies the same ones.
 """
 
 import abc
 import dis
+import fnmatch
 import gc
 import inspect
 import logging
@@ -210,12 +215,33 @@ class _Reach:
 
 
 # ---------------------------------------------------------------------- containers
-def _candidates(app, reach):
+class Rules:
+    """Which names / classes automatic tracking may touch (``track_skip`` / ``track_only`` patterns)."""
+
+    def __init__(self, skip=(), only=None):
+        self.skip, self.only = list(skip or ()), (list(only) if only is not None else None)
+
+    def __call__(self, label, obj=None) -> bool:
+        names = [label]
+        if obj is not None:
+            names.append(f"{type(obj).__module__}.{type(obj).__qualname__}")
+        if any(fnmatch.fnmatchcase(n, p) for p in self.skip for n in names):
+            return False
+        return self.only is None or any(fnmatch.fnmatchcase(n, p) for p in self.only for n in names)
+
+    def to_dict(self):
+        return {"skip": self.skip, "only": self.only}
+
+
+ALL = Rules()
+
+
+def _candidates(app, reach, wanted=ALL):
     """(containers, names, owner dicts, app objects): what the app's code can reach, and where it was found."""
     objs, names, owners, seen, apps = [], [], set(), set(), {}
 
     def add(v, name):
-        if type(v) in PLAIN and id(v) not in seen:
+        if type(v) in PLAIN and id(v) not in seen and wanted(name, v):
             seen.add(id(v))
             objs.append(v)
             names.append(name)
@@ -226,7 +252,7 @@ def _candidates(app, reach):
             if not isinstance(k, str) or k.startswith("_"):
                 continue
             add(v, prefix + k)
-            if depth < 2 and _is_app_object(v) and id(v) not in apps:
+            if depth < 2 and _is_app_object(v) and id(v) not in apps and wanted(prefix + k, v):
                 apps[id(v)] = (v, prefix + k)
                 scan(vars(v), f"{prefix}{k}.", depth + 1)
 
@@ -242,7 +268,7 @@ def _candidates(app, reach):
             except ValueError:  # not filled yet
                 continue
             add(v, name)
-            if _is_app_object(v) and id(v) not in apps:
+            if _is_app_object(v) and id(v) not in apps and wanted(name, v):
                 apps[id(v)] = (v, name)
                 scan(vars(v), f"{name}.", 1)
     return objs, names, owners, apps
@@ -285,7 +311,7 @@ def _swap(objs, names, owners):
     # locals of functions running right now (any thread) don't show up as referrers: look at the stacks
     for frame in sys._current_frames().values():
         while frame is not None:
-            if frame.f_code is not _swap.__code__:
+            if frame.f_code not in _OWN_CODE:  # Déjà's own frames hold the candidates too
                 try:
                     values = list(frame.f_locals.values())
                 except Exception:
@@ -334,12 +360,22 @@ _pending: dict = {}  # id(frame) -> (frame, globals, writes): writes to report o
 _tool = None
 
 
+_containers: set = set()  # labels of module variables holding containers (reassigned whole, e.g. CACHE = {})
+
+
 def _flush(frame):
     p = _pending.get(id(frame))
     if p is not None and p[0] is frame:
         del _pending[id(frame)]
+        g = p[1]
         for var, label in p[2]:
-            _track.touch(label, "write", p[1].get(var))
+            if label in _containers:  # a new container replaced the tracked one: track the new one too
+                v = g.get(var)
+                if type(v) in PLAIN:
+                    _swap([v], [label], {id(g)})
+                _track.touch(f"{label}[*]", "write", None)
+            else:
+                _track.touch(label, "write", g.get(var))
 
 
 def _on_line(code, line):
@@ -366,7 +402,7 @@ def _on_return(code, offset, retval):
         _flush(sys._getframe(1))
 
 
-def _monitor(reach):
+def _monitor(reach, wanted=ALL):
     """Watch the lines that read or assign module variables the app's code reassigns with ``global``."""
     global _tool
     mon = getattr(sys, "monitoring", None)
@@ -376,8 +412,14 @@ def _monitor(reach):
     for gid, written in reach.globals_written.items():
         g = reach.modules.get(gid)
         for var in written:
-            if g is not None and var in g and isinstance(g[var], SCALARS):
+            if g is None or var not in g or not wanted(reach.name(g, var), g[var]):
+                continue
+            if isinstance(g[var], SCALARS):
                 targets.setdefault(gid, {})[var] = reach.name(g, var)
+            elif type(g[var]) in PLAIN or isinstance(g[var], TRACKED):  # reassigned whole: watch its assignments
+                label = reach.name(g, var)
+                targets.setdefault(gid, {})[var] = label
+                _containers.add(label)
     if not targets:
         return []
     if _tool is None:
@@ -410,7 +452,10 @@ def _monitor(reach):
                     if line is None:
                         continue
                     r, w = lines.setdefault(line, ([], []))
-                    (w if ins.opname == "STORE_GLOBAL" else r).append((ins.argval, want[ins.argval]))
+                    if ins.opname == "STORE_GLOBAL":
+                        w.append((ins.argval, want[ins.argval]))
+                    elif want[ins.argval] not in _containers:  # a container's reads are reported by the container
+                        r.append((ins.argval, want[ins.argval]))
             if lines:
                 _lines[code] = {ln: (g, tuple(dict.fromkeys(r)), tuple(dict.fromkeys(w)))
                                 for ln, (r, w) in lines.items()}
@@ -418,14 +463,20 @@ def _monitor(reach):
     return sorted({label for t in targets.values() for label in t.values()})
 
 
+_OWN_CODE = {f.__code__ for f in (_swap, _flush, _on_line, _on_return)}
+
+
 # ---------------------------------------------------------------------- entry point
-def prepare(app, track=True) -> tuple:
+def prepare(app, track=True, rules=ALL) -> tuple:
     """What the middleware (on the first request) and replay (after startup) do once per app: fingerprint the
     source the routes reach, point clock / random / date names in those modules at the recording wrappers
     (:func:`deja.shims.rebind`), and track shared state. Returns ``(tracked names, source fingerprint)``."""
     from .shims import rebind
     from .source import fingerprint
 
+    import time
+
+    t0 = time.perf_counter()
     try:
         reach = _Reach(app)
     except Exception:
@@ -436,17 +487,20 @@ def prepare(app, track=True) -> tuple:
         rebind(reach.modules.values())
     except Exception:
         log.warning("deja: could not rebind clock names in the app", exc_info=True)
-    return (auto_track(app, reach) if track else []), source
+    tracked = auto_track(app, reach, rules) if track else []
+    log.info("deja: prepared the app in %.0f ms (%d functions, %d modules; tracking %s)",
+             1000 * (time.perf_counter() - t0), len(reach.functions), len(reach.modules), ", ".join(tracked) or "nothing")
+    return tracked, source
 
 
-def auto_track(app, reach=None) -> list:
+def auto_track(app, reach=None, rules=ALL) -> list:
     """Track the shared in-memory state reachable from ``app``'s routes. Returns the names now tracked."""
     try:
         reach = reach or _Reach(app)
-        objs, names, owners, apps = _candidates(app, reach)
+        objs, names, owners, apps = _candidates(app, reach, rules)
         done = _swap(objs, names, owners)
         done += _track_objects(apps, reach.stored_attrs)
-        done += _monitor(reach)
+        done += _monitor(reach, rules)
         return done
     except Exception:  # never let the report's helper break the app
         log.warning("deja: automatic tracking failed; in-memory state needs deja.track()", exc_info=True)

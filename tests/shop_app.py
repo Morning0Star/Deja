@@ -35,3 +35,18 @@ def make_app():
         return {"winner": services.take_ticket(name)}
 
     return app
+
+
+def make_sessions_app():
+    app = make_app()
+
+    @app.post("/reset")
+    async def reset():
+        services.reset_sessions()
+        return {}
+
+    @app.post("/login/{user}")
+    async def login(user: str):
+        return {"n": await services.login(user)}
+
+    return app

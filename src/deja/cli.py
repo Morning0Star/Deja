@@ -61,11 +61,27 @@ def cmd_show(a) -> int:
     return 0
 
 
+def _same_hash_seed(schedule):
+    """Re-run this command with the recording's PYTHONHASHSEED (set / dict-of-str order depends on it)."""
+    import os
+    import subprocess
+    import sys
+
+    seed = schedule.header.get("hash_seed")
+    if not seed or os.environ.get("PYTHONHASHSEED") == seed or os.environ.get("DEJA_NO_REEXEC"):
+        return None
+    env = {**os.environ, "PYTHONHASHSEED": seed, "DEJA_NO_REEXEC": "1"}
+    return subprocess.call([sys.executable, "-m", "deja.cli", *sys.argv[1:]], env=env)
+
+
 def cmd_replay(a) -> int:
     from .replay import Schedule, replay
 
-    factory = _load_factory(a.app)
     schedule = Schedule.load(a.recording)
+    code = _same_hash_seed(schedule)
+    if code is not None:
+        return code
+    factory = _load_factory(a.app)
     followed = 0
     last = None
     for i in range(a.times):
@@ -85,8 +101,11 @@ def cmd_report(a) -> int:
     if a.app:
         from .replay import Schedule, replay
 
-        factory = _load_factory(a.app)
         schedule = Schedule.load(a.recording)
+        code = _same_hash_seed(schedule)
+        if code is not None:
+            return code
+        factory = _load_factory(a.app)
         ok, last = 0, None
         for _ in range(a.times):
             last = replay(schedule, factory, deadline_s=a.deadline)

@@ -131,3 +131,15 @@ def test_selector_loop_records_too():
         assert loop.deja.header()["loop"] == "RecordingSelectorLoop"
     finally:
         loop.close()
+
+
+def test_recording_from_a_newer_deja_is_refused_clearly(tmp_path):
+    from deja.fileformat import FormatError, read, write
+
+    write(str(tmp_path / "new.deja"), {"format": "deja/99", "deja": "9.9"}, [])
+    try:
+        read(str(tmp_path / "new.deja"))
+    except FormatError as e:
+        assert "newer" in str(e)
+    else:
+        raise AssertionError("read a recording from the future")

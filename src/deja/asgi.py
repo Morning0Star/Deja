@@ -70,11 +70,13 @@ def flag(reason: str = "") -> None:
 
 
 class DejaMiddleware:
-    def __init__(self, app, directory: str = "deja-recordings", on_dump=None, track: bool = True):
+    def __init__(self, app, directory: str = "deja-recordings", on_dump=None, track: bool = True,
+                 track_skip=(), track_only=None):
         self.app = app
         self.directory = directory
         self.on_dump = on_dump  # optional callback(path, reason) e.g. for logging or tests
         self.track = track  # track shared in-memory state automatically (see deja.autotrack)
+        self.track_rules = {"skip": list(track_skip or ()), "only": list(track_only) if track_only is not None else None}
         self.tracked: list = []
         self._warned = False
         self._scanned = False
@@ -91,9 +93,11 @@ class DejaMiddleware:
             return await self.app(scope, receive, send)
         if not self._scanned:  # once, on the first request: startup has built the app's state
             self._scanned = True
-            from .autotrack import prepare
+            from .autotrack import Rules, prepare
 
-            self.tracked, rec.catalog["source"] = prepare(scope.get("app") or self.app, self.track)
+            rec.catalog["track"] = {**self.track_rules, "on": self.track}  # replay applies the same rules
+            self.tracked, rec.catalog["source"] = prepare(scope.get("app") or self.app, self.track,
+                                                          Rules(**self.track_rules))
         if scope["type"] == "websocket":
             return await self._websocket(rec, scope, receive, send)
 

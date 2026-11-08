@@ -19,6 +19,7 @@ Values the app read from clocks / random / uuid inside request scope are handed 
 import asyncio
 import collections
 import contextvars
+import os
 import threading
 import time as _time
 
@@ -65,9 +66,12 @@ class Schedule:
         open_io: dict[str, dict] = {}
         ignored: set[str] = set()
         started: set[str] = set()  # "q{rid}" of the requests whose start is in the recording
+        self.skipped: set[str] = set()  # requests (long connections) that began before the recording window
 
         def is_ignored(path):
             if path.split(".", 1)[0] not in started:  # began before the recording window: can't be replayed
+                if path.startswith("q"):
+                    self.skipped.add(path.split(".", 1)[0])
                 return True
             return any(path == p or path.startswith(p + ".") for p in ignored)
 
@@ -646,6 +650,10 @@ class ReplayResult:
         self.read_misses = list(loop.deja.read_misses)
         self.io_misses = list(loop.deja.io_misses)
         self.code_changed = list(loop.code_changed)
+        self.skipped = sorted(schedule.skipped)
+        seed = schedule.header.get("hash_seed")
+        self.hash_seed_differs = bool(seed) and os.environ.get("PYTHONHASHSEED") != seed
+        self.hash_seed = seed
 
     @property
     def followed(self) -> bool:
@@ -658,6 +666,12 @@ class ReplayResult:
     def summary(self) -> str:
         lines = [f"followed {self.steps_followed}/{self.steps_expected} recorded steps"
                  + (f", {len(self.extra_steps)} extra" if self.extra_steps else "")]
+        if self.skipped:
+            lines.append("NOTE: left out " + ", ".join(self.skipped) + ": they began before the recording window "
+                         "(long WebSocket connections); a bigger buffer (Recorder(max_events=...)) keeps them")
+        if self.hash_seed_differs:
+            lines.append(f"NOTE: recorded with PYTHONHASHSEED={self.hash_seed}; set the same value to replay set "
+                         "ordering exactly (deja replay does this itself)")
         if self.code_changed:
             lines.append("NOTE: the app's code differs from the recording in " + ", ".join(self.code_changed[:8])
                          + (" and more" if len(self.code_changed) > 8 else ""))
@@ -694,12 +708,14 @@ def replay(recording, app_factory, deadline_s: float = 10.0, track: bool = True)
 
     async def drive():
         await harness.startup()
-        from .autotrack import prepare
+        from .autotrack import Rules, prepare
         from .source import changed
 
         # as the middleware does on the first request: worker threads are ordered by tracked accesses, and the
         # app's clock names must point at the recording wrappers to get the recorded values back
-        _, current = prepare(app, track)
+        rules = (schedule.header.get("catalog") or {}).get("track") or {}
+        _, current = prepare(app, track and rules.get("on", True),
+                             Rules(rules.get("skip"), rules.get("only")))
         recorded = (schedule.header.get("catalog") or {}).get("source") or {}
         loop.code_changed = changed(recorded, current) if recorded else []
         loop.armed = True

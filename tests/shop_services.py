@@ -71,3 +71,19 @@ def take_ticket(name):  # runs in a worker thread (a plain def endpoint calls it
         tickets -= 1
         return name
     return None
+
+
+SESSIONS = {}
+
+
+async def login(user):
+    global SESSIONS
+    if user not in SESSIONS:
+        await asyncio.sleep(0.01)
+        SESSIONS[user] = True
+    return len(SESSIONS)
+
+
+def reset_sessions():
+    global SESSIONS
+    SESSIONS = {}  # replaced whole: the new dict must be tracked too

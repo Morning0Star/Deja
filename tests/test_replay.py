@@ -99,3 +99,28 @@ def test_replay_notes_when_the_apps_code_changed(tmp_path):
         sys.path.remove(str(src))
         for m in ("shop_app_v", "shop_services_v"):
             sys.modules.pop(m, None)
+
+
+def test_hash_seed_is_recorded_and_replay_reruns_with_it(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+
+    from deja.recorder import Recorder
+
+    monkeypatch.setenv("PYTHONHASHSEED", "123")
+    assert Recorder().header()["hash_seed"] == "123"
+    path = tmp_path / "seed.deja"
+    from deja.fileformat import write
+
+    write(str(path), {**Recorder().header()}, [])
+    monkeypatch.setenv("PYTHONHASHSEED", "0")
+    # the CLI re-runs itself with the recording's seed: the child sees 123
+    probe = tmp_path / "probe.py"
+    probe.write_text("import os\nclass App:\n    pass\ndef create_app():\n"
+                     "    open(os.environ['PROBE_OUT'], 'w').write(os.environ['PYTHONHASHSEED'])\n"
+                     "    async def app(scope, receive, send):\n        pass\n    return app\n")
+    out = tmp_path / "seen.txt"
+    env = {**__import__("os").environ, "PROBE_OUT": str(out), "PYTHONPATH": str(tmp_path)}
+    subprocess.call([sys.executable, "-m", "deja.cli", "replay", str(path), "--app", "probe:create_app"], env=env,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    assert out.read_text() == "123"

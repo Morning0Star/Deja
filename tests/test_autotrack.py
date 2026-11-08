@@ -127,3 +127,34 @@ def test_module_variable_in_worker_threads_replays_in_order(tmp_path):
         assert r.followed and r.same_responses, r.summary()
     finally:
         shop_services._slow = None
+
+
+def test_container_replaced_whole_with_global_stays_tracked(tmp_path):
+    import shop_app
+
+    out = {}
+
+    async def main():
+        app = shop_app.make_sessions_app()
+        app.add_middleware(deja.DejaMiddleware, directory=str(tmp_path))
+        rec = asyncio.get_running_loop().deja
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://app") as client:
+            await client.post("/reset")  # SESSIONS = {}: a new, untracked dict unless Déjà swaps it
+            marker = rec.mark("test")
+            await asyncio.gather(client.post("/login/ada"), client.post("/login/ada"))
+            out["path"] = rec.dump(str(tmp_path / "s.deja"), since=marker)
+
+    asyncio.run(main(), loop_factory=recording_loop)
+    c = analyze(*read(out["path"]))["conflicts"][0]
+    assert c["pattern"] == "check-then-act" and c["resource"] == "shop_services.SESSIONS[ada]"
+
+
+def test_track_skip_and_only_patterns():
+    from deja.autotrack import Rules, auto_track
+
+    app = autotrack_app.make_app()
+    got = auto_track(app, rules=Rules(skip=["taken", "store.*"]))
+    assert "taken" not in got and "store.orders" not in got and "stock" in got
+    app = autotrack_app.make_app()
+    assert auto_track(app, rules=Rules(only=["stock"])) == ["stock"]
+    assert not Rules(skip=["autotrack_app.Store"])("store", autotrack_app.Store())  # by class name

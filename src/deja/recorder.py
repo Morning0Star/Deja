@@ -8,10 +8,12 @@ one, up to now.
 import asyncio
 import collections
 import itertools
+import os
 import sys
 import time
 
 from . import events as ev
+from .fileformat import FORMAT
 from .ids import TaskRegistry
 from .threads import _thread
 
@@ -229,8 +231,10 @@ class Recorder:
     def header(self) -> dict:
         loop = self.loop
         return {
-            "format": "deja/1",
+            "format": f"deja/{FORMAT}",
             "deja": __import__("deja").__version__,
+            # set / iteration order of str keys depends on it; replay can only match it if it was fixed
+            "hash_seed": os.environ.get("PYTHONHASHSEED"),
             "python": sys.version.split()[0],
             "implementation": sys.implementation.name,
             "platform": sys.platform,
