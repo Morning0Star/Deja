@@ -75,10 +75,12 @@ class Schedule:
                 return True
             return any(path == p or path.startswith(p + ".") for p in ignored)
 
-        for e in events:
+        at: list = []  # index in `events` of each entry
+        for n, e in enumerate(events):
             code = e[0]
             if code == ev.REQUEST:
                 entries.append(("start", e[1]))
+                at.append(n)
                 self.requests[e[1]] = e
                 started.add(f"q{e[1]}")
             elif code == ev.BATCH:
@@ -91,6 +93,7 @@ class Schedule:
                 if path in open_io:
                     open_io[path]["steps"].append(len(entries))
                 entries.append(("step", path))
+                at.append(n)
             elif code == ev.TASK_NEW:
                 path, parent = e[1], e[2]
                 if parent is not None and (parent in open_io or is_ignored(parent)):
@@ -114,9 +117,13 @@ class Schedule:
                 self.responses[e[1]] = (e[2], e[3] if len(e) > 3 else b"")
             elif code == ev.NOTIFY:
                 entries.append(("notify", tuple(e[1:5])))
+                at.append(n)
             elif code == ev.TOUCH and is_thread_path(e[1]) and e[1][0] in "qb" and not is_ignored(e[1]):
                 entries.append(("thread", e[1]))  # a worker thread's access to tracked state: replay gates it here
+                at.append(n)
+        self.at = [n for x, n in zip(entries, at) if x is not None]
         self.entries = [x for x in entries if x is not None]
+        self.events = events
         self.thread_gates = collections.Counter(v for k, v in self.entries if k == "thread")
 
     @classmethod
@@ -383,6 +390,7 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
         self.code_changed: list = []  # app modules whose source differs from the recording's
         self.io_grace = 0.0  # real seconds to wait for socket I/O before jumping the virtual clock
         self._tasks: dict = {}  # path -> the replayed task that last took a step under it
+        self.on_step = None  # callback(StepInfo) before each recorded step (deja.stepper)
         self.tail_skipped: list = []  # recorded steps of tasks that had already finished in replay
 
     def time(self):
@@ -507,6 +515,12 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
 
     def _run(self, handle, path=None):
         if path is not None:
+            if self.on_step is not None:  # deja step / replay(on_step=...): pause before a recorded step
+                from .stepper import StepInfo
+
+                owner = getattr(handle._callback, "__self__", None)
+                self.on_step(StepInfo(self, len(self.trace), path, owner if isinstance(owner, asyncio.Task) else None))
+                self._progress()  # time spent paused is not time the replay waited
             self.trace.append(path)
         if path is not None or not self.armed:  # only request steps count as progress once the schedule runs:
             self._progress()  # environment work that loops forever (a retried cancellation) must still time out
@@ -865,13 +879,14 @@ def _fmt(resp):
     return f"{status} {text[:80]}"
 
 
-def replay(recording, app_factory, deadline_s: float = 10.0, track: bool = True) -> ReplayResult:
+def replay(recording, app_factory, deadline_s: float = 10.0, track: bool = True, on_step=None) -> ReplayResult:
     """Replay ``recording`` (a path or a Schedule) against a fresh app from ``app_factory()``.
 
     ``track`` tracks the app's shared in-memory state as :class:`deja.DejaMiddleware` does (see
     :mod:`deja.autotrack`); replay needs it to put worker threads' accesses in the recorded order."""
     schedule = recording if isinstance(recording, Schedule) else Schedule.load(recording)
     loop = ReplayLoop(schedule, deadline_s=deadline_s)
+    loop.on_step = on_step
     app = app_factory()
     apps = [app]
     if isinstance(app, dict):  # handlers of deja.scope() jobs
@@ -923,6 +938,12 @@ def replay(recording, app_factory, deadline_s: float = 10.0, track: bool = True)
         loop.run_until_complete(drive())
     except Divergence as d:
         divergence = str(d)
+    except Exception as exc:
+        from .stepper import Stop
+
+        if not isinstance(exc, Stop):
+            raise
+        divergence = "stopped by the user"
     finally:
         loop.deja.release_threads()
         try:

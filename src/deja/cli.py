@@ -140,6 +140,19 @@ def cmd_diff(a) -> int:
     return 0
 
 
+def cmd_step(a) -> int:
+    from .replay import Schedule, replay
+    from .stepper import Stepper
+
+    schedule = Schedule.load(a.recording)
+    code = _same_hash_seed(schedule)
+    if code is not None:
+        return code
+    r = replay(schedule, _load_factory(a.app), deadline_s=a.deadline, on_step=Stepper(at=a.at, task=a.task))
+    print(r.summary())
+    return 0
+
+
 def cmd_explore(a) -> int:
     from .explore import explore, summary
 
@@ -210,6 +223,13 @@ def main(argv=None) -> int:
     d.add_argument("--against", required=True, help="module:attribute of the new version")
     d.add_argument("--deadline", type=float, default=10.0)
     d.set_defaults(fn=cmd_diff)
+    st = sub.add_parser("step", help="replay step by step: pause before recorded steps and inspect the request")
+    st.add_argument("recording")
+    st.add_argument("--app", required=True)
+    st.add_argument("--at", type=int, help="run to this step number, then pause")
+    st.add_argument("--task", help="run until this task (q1, q0.2...) is about to run, then pause")
+    st.add_argument("--deadline", type=float, default=600.0)
+    st.set_defaults(fn=cmd_step)
     ex = sub.add_parser("explore", help="try other orderings of the recorded requests to find races not yet seen")
     ex.add_argument("recording")
     ex.add_argument("--app", required=True)
