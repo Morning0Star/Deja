@@ -171,3 +171,39 @@ def test_failed_lookup_is_a_read_of_nothing():
             d["k"]
 
     assert touches_from(work) == [("d[k]", "read", None)]
+
+
+def test_values_inside_a_tracked_dict_are_tracked_when_nothing_else_holds_them():
+    import collections
+
+    carts = deja.track({}, "carts")
+    holds = deja.track(collections.defaultdict(list), "holds")
+    shared = {"qty": 0}
+
+    class Account:
+        def __init__(self):
+            self.balance = 10
+
+    accounts = deja.track({7: Account()}, "accounts")
+
+    def work():
+        carts["c1"] = {"qty": 1}  # fresh: stored tracked
+        carts["c1"]["qty"] += 1
+        mine = {"qty": 5}
+        carts["c2"] = mine  # a local still holds it: stays plain, so `mine` and carts["c2"] stay one object
+        mine["qty"] = 6
+        carts["c3"] = shared  # held elsewhere too: stays plain
+        carts.setdefault("c4", {})["qty"] = 1
+        holds["x"].append("item")
+        accounts[7].balance -= 3
+
+    got = touches_from(work)
+    assert ("accounts[7].balance", "read", 10) in got and ("accounts[7].balance", "write", 7) in got
+    assert carts["c2"] == {"qty": 6} and carts["c3"] is shared
+    if __import__("sys").implementation.name != "cpython":
+        return  # nested containers need reference counts (PyPy has none): they stay plain there
+    assert ("carts[c1][qty]", "read", 1) in got and ("carts[c1][qty]", "write", 2) in got
+    assert ("carts[c4][qty]", "write", 1) in got and ("holds[x][item]", "write", "item") in got
+    assert ("accounts[7].balance", "read", 10) in got and ("accounts[7].balance", "write", 7) in got
+    assert not any(r.startswith(("carts[c2][", "carts[c3][")) for r, _, _ in got)
+    assert carts["c2"] == {"qty": 6} and carts["c3"] is shared and type(carts["c1"]) is not dict

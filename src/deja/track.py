@@ -17,6 +17,12 @@ Most apps don't need these calls: :class:`deja.DejaMiddleware` tracks the state 
   assigning by index are a write of ``name[*]``.
 * any other object with a ``__dict__``: tracked in place (its class is swapped for a subclass) and returned.
   Reading or assigning a public data attribute is reported as ``name.attr``; methods and ``_private`` names are not.
+* **values inside** a tracked dict: a new ``dict`` / ``list`` / ``set``... stored in it (``carts[c] = {"qty": 1}``,
+  ``setdefault``, a ``defaultdict``'s default) is stored as a tracked copy named ``carts[c]``, so
+  ``carts[c]["qty"] += 1`` reports ``carts[c][qty]``. Only a value nothing else refers to is copied (checked with the
+  reference count and the caller's local variables), so no alias is split; a value something else also holds stays
+  plain. An object of the app's own classes stored in it is tracked in place, as ``carts[c].attr``. (On PyPy, which
+  has no reference counts, nested containers stay plain.)
 
 Reports are recorded only inside a request on a recording loop and cost one check otherwise. During replay, an
 operation made in a worker thread first waits for its turn in the recorded order (see :mod:`deja.threads`); that
@@ -25,6 +31,7 @@ record and replay work without it.
 """
 
 import collections
+import sys
 import threading
 
 from . import annotate
@@ -55,6 +62,63 @@ def _turn(n=1):
     if t is not None and getattr(t[0], "replaying", False):
         for _ in range(n):
             t[0].thread_gate(t[1])
+
+
+def _calibrate():
+    """The reference count a brand-new value has inside ``__setitem__`` on this interpreter (3.14 borrows)."""
+    if sys.implementation.name != "cpython":
+        return None
+    seen = []
+
+    class Probe(dict):
+        def __setitem__(self, k, v):
+            seen.append(sys.getrefcount(v))
+
+    Probe()["x"] = {}
+    return seen[0]
+
+
+_FRESH_REFS = _calibrate()
+_OWN_FILE = __file__
+
+
+def _fresh(v, refs) -> bool:
+    """True when ``v`` (with ``refs`` references inside our ``__setitem__``) is held by nothing else: no other
+    container (reference count) and no local variable of the code storing it (which 3.14 doesn't count)."""
+    if _FRESH_REFS is None or refs > _FRESH_REFS:
+        return False
+    f = sys._getframe(2)
+    for _ in range(40):
+        if f is None:
+            break
+        if f.f_code.co_filename != _OWN_FILE:
+            try:
+                if any(x is v for x in f.f_locals.values()):
+                    return False
+            except Exception:
+                return False
+        f = f.f_back
+    return True
+
+
+def _child(parent, k, v):
+    """A tracked copy of container ``v`` stored under key ``k`` of ``parent``."""
+    return copy_of(v, _res(parent._deja_name, parent._deja_key, k))
+
+
+def _app_object(v, parent, k):
+    """Track an app object found in a tracked container in place (same object, so always safe)."""
+    if v is None or isinstance(v, (int, float, str, bytes, bool, tuple, frozenset)) or isinstance(v, TRACKED):
+        return
+    if not hasattr(v, "__dict__") or type(v) in _classes.values() or annotate._recorder() is None and _thread.get() is None:
+        return
+    from .autotrack import _is_app_object
+
+    if _is_app_object(v) and type(type(v)) is type:
+        try:
+            track_object(v, _res(parent._deja_name, parent._deja_key, k))
+        except TypeError:
+            pass
 
 
 def _res(name, key, k):
@@ -103,6 +167,7 @@ class _MappingOps(_Tracked):
             raise
         if on:
             self._r(k, "read", v)
+            _app_object(v, self, k)
         return v
 
     def get(self, k, default=None):
@@ -110,6 +175,8 @@ class _MappingOps(_Tracked):
         v = dict.get(self, k, _MISSING)
         if on:
             self._r(k, "read", None if v is _MISSING else v)
+            if v is not _MISSING:
+                _app_object(v, self, k)
         return default if v is _MISSING else v
 
     def __contains__(self, k):
@@ -120,7 +187,10 @@ class _MappingOps(_Tracked):
         return found
 
     def __setitem__(self, k, v):
+        refs = sys.getrefcount(v)  # first: anything below adds references
         on = self._on()
+        if self._deja_name is not None and type(v) in COPIES and _fresh(v, refs):
+            v = _child(self, k, v)
         super().__setitem__(k, v)
         if on:
             self._r(k, "write", v)
@@ -158,8 +228,11 @@ class _MappingOps(_Tracked):
         return k, v
 
     def setdefault(self, k, default=None):
+        refs = sys.getrefcount(default)
         had = dict.__contains__(self, k)
         on = self._on(1 if had else 2)
+        if not had and self._deja_name is not None and type(default) in COPIES and _fresh(default, refs):
+            default = _child(self, k, default)
         v = super().setdefault(k, default)
         if on:
             self._r(k, "read", v if had else None)
@@ -238,6 +311,8 @@ class TrackedDefaultDict(_MappingOps, collections.defaultdict):
         if self.default_factory is None:
             raise KeyError(k)
         v = self.default_factory()
+        if self._deja_name is not None and type(v) in COPIES and _FRESH_REFS is not None:
+            v = _child(self, k, v)  # made right here: nothing else holds it
         self[k] = v
         return v
 
