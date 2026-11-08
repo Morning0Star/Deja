@@ -285,6 +285,22 @@ class ReplayRecorder(Recorder):
         loop.call_soon(fut.set_result, None)
         await fut
 
+    def io_replay_sync(self, path, op, digest, decode):
+        """A blocking call answered from the recording (a sync client in a worker thread or a handler)."""
+        from . import codec
+
+        queue = self._io.get(path)
+        if not queue:
+            self.io_misses.append(f"{path}: {op} was not called here in the recording")
+            return decode(None)
+        entry = queue.popleft()
+        if entry.op != op or entry.digest != digest:
+            self.io_misses.append(f"{path}: recorded {entry.op} but replay called {op}"
+                                  + ("" if entry.op != op else " with different arguments"))
+        if entry.kind == "err":
+            raise codec.decode_exc(entry.value)
+        return decode(entry.value)
+
     async def io_replay_live(self, path, op, digest, real):
         """Run ``real()`` for real, outside request scope, and resume the request once, as the recorded call did."""
         from .adapters import _inside

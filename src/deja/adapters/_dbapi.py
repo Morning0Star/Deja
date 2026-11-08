@@ -177,3 +177,70 @@ class FakeCursor:
     async def __aexit__(self, *exc):
         await self.close()
         return False
+
+
+# ---------------------------------------------------------------------- blocking drivers (sync psycopg)
+def run_sync(op, flavor, cur, sql, params, real_execute, fetchall, describe):
+    """The blocking twin of :func:`run` (in worker threads, or a blocking call in a handler)."""
+    from . import io_call_sync
+
+    text, values = to_dollar(sql, params)
+
+    def real():
+        real_execute()
+        cols, rowcount, lastrowid, status = describe()
+        rows = fetchall() if cols else None
+        return {"rows": rows, "columns": cols, "rowcount": rowcount, "lastrowid": lastrowid, "status": status}
+
+    res = io_call_sync(op, (flavor, text, values), real, encode=encode_result, decode=decode_result)
+    remember(cur, res)
+    return res
+
+
+class SyncFakeCursor:
+    """A blocking cursor answering from the recording (replay)."""
+
+    def __init__(self, conn, op, flavor):
+        self.connection, self._op, self._flavor = conn, op, flavor
+        self.arraysize, self.closed = 1, False
+        remember(self, {"rows": None, "columns": None, "rowcount": -1, "lastrowid": None, "status": None})
+
+    def execute(self, sql, params=None, *args, **kwargs):
+        self.connection._before_statement(sql)
+        run_sync(self._op, self._flavor, self, sql, params, None, None, None)
+        return self
+
+    def executemany(self, sql, seq, *args, **kwargs):
+        for params in seq:
+            self.execute(sql, params)
+
+    def fetchone(self):
+        return fetchone(self)
+
+    def fetchmany(self, size=None):
+        return fetch(self, size or self.arraysize)
+
+    def fetchall(self):
+        return fetch(self)
+
+    def __iter__(self):
+        while True:
+            row = fetchone(self)
+            if row is None:
+                return
+            yield row
+
+    rowcount = FakeCursor.rowcount
+    lastrowid = FakeCursor.lastrowid
+    statusmessage = FakeCursor.statusmessage
+    description = FakeCursor.description
+
+    def close(self):
+        self.closed = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False

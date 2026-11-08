@@ -313,6 +313,7 @@ def install():
     tx = psycopg.AsyncTransaction
     _undo.append(patch(tx, "__aenter__", _wrap_tx_enter))
     _undo.append(patch(tx, "__aexit__", _wrap_tx_exit))
+    _install_sync()
     try:
         import psycopg_pool
     except ImportError:
@@ -334,3 +335,187 @@ def install():
 def uninstall():
     while _undo:
         _undo.pop()()
+
+
+# ---------------------------------------------------------------------- the blocking API (psycopg.Connection)
+def _sync_tx_op(op):
+    from . import io_call_sync
+
+    return io_call_sync(op, (op,), lambda: None, encode=lambda v: None, decode=lambda v: None)
+
+
+class SyncFakeTransaction:
+    def __init__(self, conn):
+        self.connection = conn
+
+    def __enter__(self):
+        _sync_tx_op("pg.tx.start")
+        self.connection._depth += 1
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        _sync_tx_op("pg.tx.commit" if exc_type is None else "pg.tx.rollback")
+        self.connection._depth -= 1
+        return False
+
+
+class SyncFakeConnection:
+    """Stands in for ``psycopg.Connection`` during replay."""
+
+    def __init__(self, autocommit=False):
+        self.autocommit, self._in_tx, self._depth, self.closed = autocommit, False, 0, False
+
+    def _before_statement(self, sql):
+        if not self._depth and not self.autocommit and not self._in_tx:
+            _sync_tx_op("pg.tx.start")
+            self._in_tx = True
+
+    def cursor(self, *args, **kwargs):
+        return _dbapi.SyncFakeCursor(self, OP, FLAVOR)
+
+    def execute(self, query, params=None, **kwargs):
+        cur = self.cursor()
+        cur.execute(_sql(query), params)
+        return cur
+
+    def commit(self):
+        _sync_tx_op("pg.tx.commit")
+        self._in_tx = False
+
+    def rollback(self):
+        _sync_tx_op("pg.tx.rollback")
+        self._in_tx = False
+
+    def transaction(self, *args, **kwargs):
+        return SyncFakeTransaction(self)
+
+    def close(self):
+        if not self.closed:
+            _sync_tx_op("pg.close")
+        self.closed = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None:
+            self.commit()
+        else:
+            self.rollback()
+        self.close()
+        return False
+
+
+def _install_sync():
+    from . import _sync_context, io_call_sync
+
+    def in_scope():
+        return _sync_context()[0] is not None
+
+    cur = psycopg.Cursor
+    fetchall = cur.fetchall
+
+    def make_execute(original):
+        def execute(self, query, params=None, **kwargs):
+            if not in_scope():
+                return original(self, query, params, **kwargs)
+            conn = self.connection
+            if not conn.autocommit and conn.info.transaction_status == pq.TransactionStatus.IDLE:
+                _sync_tx_op("pg.tx.start")
+
+            def describe():
+                cols = [d.name for d in self.description] if self.description else None
+                return cols, self.rowcount, None, self.statusmessage
+
+            _dbapi.run_sync(OP, FLAVOR, self, _sql(query, self), params,
+                            lambda: original(self, query, params, **kwargs), lambda: fetchall(self), describe)
+            return self
+
+        return execute
+
+    def make_fetch(original, how):
+        def fetch(self, *args, **kwargs):
+            if _dbapi.state(self) is None:
+                return original(self, *args, **kwargs)
+            if how == "one":
+                return _dbapi.fetchone(self)
+            if how == "many":
+                return _dbapi.fetch(self, (args[0] if args else kwargs.get("size")) or self.arraysize)
+            return _dbapi.fetch(self)
+
+        return fetch
+
+    def make_iter(original):
+        def __iter__(self):
+            if _dbapi.state(self) is None:
+                return original(self)
+            return iter(_dbapi.fetch(self))
+
+        return __iter__
+
+    def make_conn_op(op):
+        def make(original):
+            def method(self, *args, **kwargs):
+                if not in_scope():
+                    return original(self, *args, **kwargs)
+                return io_call_sync(op, (op,), lambda: original(self, *args, **kwargs), encode=lambda v: None,
+                                    decode=lambda v: None)
+
+            return method
+
+        return make
+
+    def make_tx_enter(original):
+        def __enter__(self):
+            if in_scope():
+                _sync_tx_op("pg.tx.start")
+            return original(self)
+
+        return __enter__
+
+    def make_tx_exit(original):
+        def __exit__(self, exc_type, exc, tb):
+            if in_scope():
+                _sync_tx_op("pg.tx.commit" if exc_type is None else "pg.tx.rollback")
+            return original(self, exc_type, exc, tb)
+
+        return __exit__
+
+    _undo.append(patch(cur, "execute", make_execute))
+    _undo.append(patch(cur, "fetchone", lambda o: make_fetch(o, "one")))
+    _undo.append(patch(cur, "fetchmany", lambda o: make_fetch(o, "many")))
+    _undo.append(patch(cur, "fetchall", lambda o: make_fetch(o, "all")))
+    _undo.append(patch(cur, "__iter__", make_iter))
+    conn = psycopg.Connection
+    _undo.append(patch(conn, "commit", make_conn_op("pg.tx.commit")))
+    _undo.append(patch(conn, "rollback", make_conn_op("pg.tx.rollback")))
+
+    def make_close(original):
+        def close(self):
+            if self.closed or not in_scope():
+                return original(self)
+            return io_call_sync("pg.close", ("pg.close",), lambda: original(self), encode=lambda v: None,
+                                decode=lambda v: None)
+
+        return close
+
+    _undo.append(patch(conn, "close", make_close))
+    _undo.append(patch(psycopg.Transaction, "__enter__", make_tx_enter))
+    _undo.append(patch(psycopg.Transaction, "__exit__", make_tx_exit))
+    original_connect = conn.__dict__["connect"]
+
+    def connect(cls, conninfo="", **kwargs):
+        rec, path = _sync_context()
+        if rec is not None and getattr(rec, "replaying", False):
+            _sync_tx_op("pg.connect")
+            return SyncFakeConnection(kwargs.get("autocommit", False))
+        if rec is None:
+            return original_connect.__func__(cls, conninfo, **kwargs)
+        return io_call_sync("pg.connect", ("pg.connect",), lambda: original_connect.__func__(cls, conninfo, **kwargs),
+                            encode=lambda v: None, decode=lambda v: None)
+
+    conn.connect = classmethod(connect)
+    _undo.append(lambda: setattr(conn, "connect", original_connect))
+    module_connect = psycopg.connect  # `psycopg.connect` is Connection.connect, bound when psycopg was imported
+    psycopg.connect = conn.connect
+    _undo.append(lambda: setattr(psycopg, "connect", module_connect))

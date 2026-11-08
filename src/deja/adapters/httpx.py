@@ -13,7 +13,7 @@ import base64
 
 import httpx
 
-from . import _context, io_call, passthrough, patch, replaying
+from . import _context, io_call, io_call_sync, passthrough, patch, replaying
 
 _undo = []
 
@@ -110,6 +110,26 @@ def install():
         return send
 
     _undo.append(patch(httpx.AsyncClient, "send", make))
+
+    def make_sync(original):  # httpx.Client (sync): in worker threads and blocking calls in handlers
+        def send(self, request, *args, stream=False, **kwargs):
+            try:
+                body = request.content
+            except Exception:
+                body = None
+
+            def real():
+                resp = original(self, request, *args, stream=stream, **kwargs)
+                resp.read()  # recorded whole (a sync stream is replayed in one piece)
+                return resp
+
+            return io_call_sync("http.send", (request.method, str(request.url), body), real, encode=_encode,
+                                decode=_decode)
+
+        send.__wrapped__ = original
+        return send
+
+    _undo.append(patch(httpx.Client, "send", make_sync))
 
 
 def uninstall():

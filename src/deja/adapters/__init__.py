@@ -21,7 +21,7 @@ _get_loop = asyncio._get_running_loop
 _inside = contextvars.ContextVar("deja_inside_io", default=False)  # suppress nested adapter calls
 
 KNOWN = ("asyncpg", "httpx", "redis", "anyio", "aiohttp", "psycopg", "aiosqlite", "grpc", "aiobotocore", "pymongo",
-         "aiomysql", "aiokafka")
+         "aiomysql", "aiokafka", "requests", "botocore")
 EXECUTOR_OP = "executor"  # loop.run_in_executor, recorded by the loop itself
 OPTIONAL_OPS = {"pg.prepare"}  # may be skipped by a client-side cache (SQLAlchemy's statement cache); see replay
 OUTSIDE_LIMIT = 500  # distinct out-of-request calls (startup queries) whose results are kept for replay
@@ -89,6 +89,41 @@ async def io_call(op: str, key, real, *, encode=codec.encode, decode=codec.decod
     token = _inside.set(True)
     try:
         result = await real()
+    except BaseException as exc:
+        rec.io_end(path, op, key, "err", codec.encode_exc(exc))
+        raise
+    finally:
+        _inside.reset(token)
+    rec.io_end(path, op, key, "ok", encode(result))
+    return result
+
+
+def _sync_context():
+    """(recorder, path) for a blocking call made in request scope: in a worker thread a request started, or on the
+    loop thread inside a request (a blocking call in an async handler); else (None, None)."""
+    if _inside.get():
+        return None, None
+    from ..threads import _thread
+
+    t = _thread.get()
+    if t is not None:
+        return t
+    rec, path = _context()
+    return (rec, path) if path is not None else (None, None)
+
+
+def io_call_sync(op: str, key, real, *, encode=codec.encode, decode=codec.decode):
+    """The blocking twin of :func:`io_call`, for sync clients (requests, sync httpx, boto3, sync psycopg) used in
+    worker threads or directly in handlers. Calls outside request scope run untouched."""
+    rec, path = _sync_context()
+    if rec is None:
+        return real()
+    if getattr(rec, "replaying", False):
+        return rec.io_replay_sync(path, op, digest(key), decode)
+    rec.io_start(path, op)
+    token = _inside.set(True)
+    try:
+        result = real()
     except BaseException as exc:
         rec.io_end(path, op, key, "err", codec.encode_exc(exc))
         raise

@@ -104,3 +104,33 @@ def test_psycopg_check_then_insert_found_and_replayed(tmp_path, pooled):
     assert c["pattern"] == "check-then-act" and c["resource"] == "deja_users[name=ada]", a["story"]
     r = replay(path, signup_app(DEAD, pooled), deadline_s=5)
     assert r.followed and r.same_responses, r.summary()
+
+
+def sync_app(dsn):
+    """Blocking psycopg in a plain def endpoint (a worker thread)."""
+    def factory():
+        app = FastAPI()
+
+        @app.post("/visit/{page}")
+        def visit(page: str):
+            with psycopg.connect(dsn) as c:
+                with c.cursor() as cur:
+                    cur.execute("SELECT count(*) FROM deja_users WHERE name = %s", (page,))
+                    n = cur.fetchone()[0]
+                    cur.execute("INSERT INTO deja_users (name, email) VALUES (%s, %s)", (page, "v"))
+            return {"before": n}
+
+        return app
+
+    return factory
+
+
+def test_sync_psycopg_in_threads_replays_without_the_database(tmp_path):
+    with psycopg.connect(PG_DSN, autocommit=True) as c:
+        c.execute("CREATE TABLE IF NOT EXISTS deja_users (name text, email text)")
+        c.execute("DELETE FROM deja_users WHERE name = 'home'")
+    path, responses = record_concurrently(sync_app(PG_DSN), [("POST", "/visit/home"), ("POST", "/visit/home")],
+                                          str(tmp_path / "s.deja"))
+    assert sorted(r.json()["before"] for r in responses) in ([0, 0], [0, 1])
+    r = replay(path, sync_app(DEAD), deadline_s=5)
+    assert r.followed and r.same_responses, r.summary()
