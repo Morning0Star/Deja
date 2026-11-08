@@ -7,7 +7,7 @@ recordings, so recording is refused on versions that haven't been checked (archi
 import sys
 import warnings
 
-VERIFIED = {(3, 12), (3, 14)}
+VERIFIED = {(3, 12), (3, 13), (3, 14), (3, 15)}
 
 
 def supported() -> bool:

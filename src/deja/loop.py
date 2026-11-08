@@ -1,7 +1,8 @@
 """Recording event loops.
 
 ``RecordingSelectorLoop`` / ``RecordingProactorLoop`` replace ``_run_once`` with an instrumented copy of CPython's
-own (identical in 3.12 and 3.14 apart from how the select timeout is clamped). The only additions: one ``BATCH``
+own (identical in 3.12 to 3.15 apart from how the select timeout is clamped, and 3.15 keeping the "due timers"
+cutoff strictly increasing with ``math.ulp``). The only additions: one ``BATCH``
 event per pass, and one ``STEP`` / ``PLUMB`` event per handle that actually runs. Logging per pass instead of
 wrapping each callback is what keeps overhead low (spike S2: +3-10% vs +55-138%).
 
@@ -10,6 +11,7 @@ The copy is derived from CPython's ``Lib/asyncio/base_events.py`` (PSF License).
 
 import asyncio
 import heapq
+import math
 import sys
 import time
 from asyncio import base_events
@@ -21,6 +23,7 @@ from .recorder import Recorder
 _monotonic = time.monotonic  # captured before shims patch time.monotonic
 _perf_ns = time.perf_counter_ns  # one read per loop pass gives the report a real time axis
 _Task = asyncio.Task
+_ULP_CUTOFF = sys.version_info >= (3, 15)  # 3.15: end_time = now + max(resolution, ulp(now))
 
 
 def _in_thread(rec, tpath, func):
@@ -147,7 +150,11 @@ class _RecordingMixin:
         self._process_events(event_list)
         event_list = None
 
-        end_time = self.time() + self._clock_resolution
+        if _ULP_CUTOFF:
+            now = self.time()
+            end_time = now + max(self._clock_resolution, math.ulp(now))
+        else:
+            end_time = self.time() + self._clock_resolution
         while self._scheduled:
             handle = self._scheduled[0]
             if handle._when >= end_time:
