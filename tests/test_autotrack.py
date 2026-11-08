@@ -158,3 +158,25 @@ def test_track_skip_and_only_patterns():
     app = autotrack_app.make_app()
     assert auto_track(app, rules=Rules(only=["stock"])) == ["stock"]
     assert not Rules(skip=["autotrack_app.Store"])("store", autotrack_app.Store())  # by class name
+
+
+def test_pydantic_model_state_is_tracked(tmp_path):
+    import pydantic_app
+
+    out = {}
+
+    async def main():
+        app = pydantic_app.make_app()
+        app.add_middleware(deja.DejaMiddleware, directory=str(tmp_path))
+        rec = asyncio.get_running_loop().deja
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://app") as client:
+            marker = rec.mark("test")
+            out["r"] = await asyncio.gather(client.post("/pay"), client.post("/pay"))
+            out["path"] = rec.dump(str(tmp_path / "w.deja"), since=marker)
+
+    asyncio.run(main(), loop_factory=recording_loop)
+    assert [r.json() for r in out["r"]] == [{"balance": 70, "same": True}] * 2
+    c = analyze(*read(out["path"]))["conflicts"][0]
+    assert c["pattern"] == "lost-update" and c["resource"] == "wallet.balance"
+    r = replay(out["path"], pydantic_app.make_app, deadline_s=5)
+    assert r.followed and r.same_responses, r.summary()

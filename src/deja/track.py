@@ -114,7 +114,7 @@ def _app_object(v, parent, k):
         return
     from .autotrack import _is_app_object
 
-    if _is_app_object(v) and type(type(v)) is type:
+    if _is_app_object(v) and _swappable(type(v)):
         try:
             track_object(v, _res(parent._deja_name, parent._deja_key, k))
         except TypeError:
@@ -626,6 +626,32 @@ def _reported(self, attr):
     return not callable(v) and not isinstance(v, TRACKED)
 
 
+def _new_as(cls, *args):
+    return cls.__new__(cls, *args)
+
+
+_swap_lock = threading.RLock()
+
+
+class _as_original:
+    """Show tracked objects as their original class for a moment (to compare them)."""
+
+    def __init__(self, *objs):
+        self.objs = [(o, type(o)) for o in objs if type(o) in _classes.values()]
+
+    def __enter__(self):
+        _swap_lock.acquire()
+        for o, t in self.objs:
+            object.__setattr__(o, "__class__", t.__mro__[1])
+
+    def __exit__(self, *exc):
+        try:
+            for o, t in self.objs:
+                object.__setattr__(o, "__class__", t)
+        finally:
+            _swap_lock.release()
+
+
 def _tracked_class(cls):
     if cls in _classes:
         return _classes[cls]
@@ -651,12 +677,27 @@ def _tracked_class(cls):
         def __reduce_ex__(self, protocol):  # pickle / copy as the original class
             r = cls.__reduce_ex__(self, protocol)
             if isinstance(r, tuple) and len(r) > 1 and isinstance(r[1], tuple) and r[1] and r[1][0] is Tracked:
-                r = (r[0], (cls,) + r[1][1:]) + r[2:]
+                r = (_new_as, (cls,) + r[1][1:]) + r[2:]  # (pickle refuses __newobj__ with another class)
             return r
+
+        def __eq__(self, other):  # equal to an untracked object of the same class (dataclasses, pydantic compare types)
+            with _as_original(self, other):
+                return self == other
+
+        __hash__ = cls.__hash__
 
     Tracked.__name__, Tracked.__qualname__, Tracked.__module__ = cls.__name__, cls.__qualname__, cls.__module__
     _classes[cls] = Tracked
     return Tracked
+
+
+def _swappable(cls) -> bool:
+    """Classes whose instances can be tracked in place: plain classes, ABCs and pydantic models (enums and other
+    metaclasses build their instances in ways a subclass would break)."""
+    import abc
+
+    meta = type(cls)
+    return meta in (type, abc.ABCMeta) or meta.__module__.startswith("pydantic.")
 
 
 def track_object(obj, name):

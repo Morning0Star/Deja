@@ -374,7 +374,7 @@ def _track_objects(apps, stored_attrs):
     done = []
     for obj, name in apps.values():
         cls = type(obj)
-        if cls in _track._classes.values() or type(cls) not in (type, abc.ABCMeta):  # pydantic, enums: leave them
+        if cls in _track._classes.values() or not _track._swappable(cls):  # enums and other metaclasses: leave them
             continue
         attrs = {k for k, v in vars(obj).items() if k[0] != "_" and not callable(v) and not isinstance(v, TRACKED)}
         if not attrs & stored_attrs:
