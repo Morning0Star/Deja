@@ -140,6 +140,20 @@ def cmd_diff(a) -> int:
     return 0
 
 
+def cmd_merge(a) -> int:
+    import glob
+    import os
+
+    from .group import merge
+
+    paths = sorted(glob.glob(os.path.join(a.folder, "*.deja")))
+    if not paths:
+        print(f"no worker recordings in {a.folder}")
+        return 1
+    print(merge(paths, a.out))
+    return 0
+
+
 def cmd_export_test(a) -> int:
     from .verify import export_test
 
@@ -179,6 +193,10 @@ def main(argv=None) -> int:
     d.add_argument("--against", required=True, help="module:attribute of the new version")
     d.add_argument("--deadline", type=float, default=10.0)
     d.set_defaults(fn=cmd_diff)
+    mg = sub.add_parser("merge", help="merge the workers' recordings of one group request (deja.group)")
+    mg.add_argument("folder", help="<group>/<request id>/ holding one .deja per worker")
+    mg.add_argument("-o", "--out", required=True)
+    mg.set_defaults(fn=cmd_merge)
     x = sub.add_parser("export-test", help="write a pytest regression test for the recorded race")
     x.add_argument("recording")
     x.add_argument("--app", required=True, help="module:attribute the test will import")

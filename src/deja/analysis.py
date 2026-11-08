@@ -710,7 +710,10 @@ def _conflicts(touches):
                         continue
                     seen.add(key)
                     if first_wa and later_wb:
-                        pattern = "check-then-act" if _absent(r_a["value"]) and _absent(r_b["value"]) else "lost-update"
+                        def none_there(t):
+                            return _absent(t["value"]) or (t.get("existence") and t["value"] == 0)
+
+                        pattern = "check-then-act" if none_there(r_a) and none_there(r_b) else "lost-update"
                     elif first_wa or later_wb:
                         pattern = "stale-read"
                     else:

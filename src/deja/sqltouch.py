@@ -434,6 +434,11 @@ def touches(sql: str, params: list):
                                 "where": cond if precise else full(where), "precise": precise, "lock": lock})
                     if sel is not None and any(sel.args.get(k) for k in ("joins", "limit", "offset", "having")):
                         out[-1]["partial"] = True  # rows also filtered by a join / LIMIT: "no WHERE" isn't "all"
+                    first = sel.expressions[0] if sel is not None and len(sel.expressions) == 1 else None
+                    first = first.this if isinstance(first, exp.Alias) else first
+                    if isinstance(first, (exp.Count, exp.Exists)) or (
+                            isinstance(first, exp.Literal) and str(first.this) == "1"):
+                        out[-1]["existence"] = True  # count(*) / EXISTS / SELECT 1: 0, False or no row = none there
                     if sel is not None and len(sel.expressions) == 1 and isinstance(sel.expressions[0], exp.Column):
                         out[-1]["column"] = sel.expressions[0].name  # fetchval-style scalar: its value is this column
                     if not precise and where is not None:

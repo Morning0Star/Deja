@@ -295,6 +295,40 @@ class Recorder:
             "catalog": {k: dict(v) for k, v in self.catalog.items()},
         }
 
+    _TIME_AT = {ev.BATCH: 2, ev.REQUEST: 7, ev.RESPONSE: 4, ev.IO_START: 3, ev.IO_END: 6, ev.TOUCH: 5, ev.FLAG: 3,
+                ev.NOTIFY: 5}
+
+    def slice(self, t0: int, t1: int) -> list:
+        """Events between perf_counter_ns ``t0`` and ``t1`` (each event takes the time of the latest timestamp before
+        it), for a group request (see :mod:`deja.group`)."""
+        events = self.events()
+        starts, ends = {}, {}
+        for e in events:  # requests still running when the window opened: include them from their start
+            if e[0] == ev.REQUEST and len(e) > 7:
+                starts[e[1]] = e[7]
+            elif e[0] == ev.RESPONSE and len(e) > 4:
+                ends[e[1]] = e[4]
+        for rid, t in starts.items():
+            if t < t0 and (ends.get(rid) is None or ends[rid] >= t0):
+                t0 = t
+        out, now = [], None
+        for e in events:
+            i = self._TIME_AT.get(e[0])
+            if i is not None and len(e) > i and isinstance(e[i], int):
+                now = e[i]
+            if now is not None and t0 <= now <= t1:
+                out.append(e)
+            elif now is not None and now > t1:
+                break
+        return out
+
+    def first_time(self, events) -> int | None:
+        for e in events:
+            i = self._TIME_AT.get(e[0])
+            if i is not None and len(e) > i and isinstance(e[i], int):
+                return e[i]
+        return None
+
     def since(self, marker: tuple) -> list:
         """Events from ``marker`` (identity match) to now."""
         start = next((i for i, x in enumerate(self.buffer) if x is marker), 0)

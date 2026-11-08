@@ -770,6 +770,41 @@ class ASGIHarness:
                 pass
 
 
+class WorkersHarness:
+    """A merged recording of several worker processes (deja.group): one app per worker, each request served by its
+    own worker's app, so workers keep separate memory as they did."""
+
+    def __init__(self, harnesses):
+        self.harnesses = harnesses
+
+    def _of(self, rid):
+        from .group import OFFSET
+
+        return self.harnesses[min(rid // OFFSET, len(self.harnesses) - 1)]
+
+    def started(self, rid):
+        return self._of(rid).started(rid)
+
+    def start(self, rid):
+        self._of(rid).start(rid)
+
+    @property
+    def tasks(self):
+        return {k: v for h in self.harnesses for k, v in h.tasks.items()}
+
+    @property
+    def results(self):
+        return {k: v for h in self.harnesses for k, v in h.results.items()}
+
+    async def startup(self):
+        for h in self.harnesses:
+            await h.startup()
+
+    async def shutdown(self):
+        for h in self.harnesses:
+            await h.shutdown()
+
+
 # ---------------------------------------------------------------------- entry point
 class ReplayResult:
     def __init__(self, schedule, loop, harness, divergence):
@@ -838,10 +873,14 @@ def replay(recording, app_factory, deadline_s: float = 10.0, track: bool = True)
     schedule = recording if isinstance(recording, Schedule) else Schedule.load(recording)
     loop = ReplayLoop(schedule, deadline_s=deadline_s)
     app = app_factory()
+    apps = [app]
     if isinstance(app, dict):  # handlers of deja.scope() jobs
         from .scope import JobHarness
 
         harness = JobHarness(loop, app)
+    elif len(schedule.header.get("workers") or []) > 1:  # merged workers: one app each
+        apps += [app_factory() for _ in schedule.header["workers"][1:]]
+        harness = WorkersHarness([ASGIHarness(loop, a) for a in apps])
     elif type(app).__module__.startswith("aiohttp."):
         from .aiohttp_web import AiohttpHarness
 
@@ -864,8 +903,8 @@ def replay(recording, app_factory, deadline_s: float = 10.0, track: bool = True)
         # as the middleware does on the first request: worker threads are ordered by tracked accesses, and the
         # app's clock names must point at the recording wrappers to get the recorded values back
         rules = (schedule.header.get("catalog") or {}).get("track") or {}
-        _, current = prepare(target, track and rules.get("on", True),
-                             Rules(rules.get("skip"), rules.get("only")))
+        for a in (apps if not isinstance(app, dict) else [target]):
+            _, current = prepare(a, track and rules.get("on", True), Rules(rules.get("skip"), rules.get("only")))
         recorded = (schedule.header.get("catalog") or {}).get("source") or {}
         loop.code_changed = changed(recorded, current) if recorded else []
         loop._progress()  # preparing the app (a heap scan: slow on PyPy) is not time the recording waited

@@ -71,12 +71,15 @@ def flag(reason: str = "") -> None:
 
 class DejaMiddleware:
     def __init__(self, app, directory: str = "deja-recordings", on_dump=None, track: bool = True,
-                 track_skip=(), track_only=None, background: bool = True):
+                 track_skip=(), track_only=None, background: bool = True, group: str | None = None,
+                 worker: str | None = None):
         self.app = app
         self.directory = directory
         self.on_dump = on_dump  # optional callback(path, reason) e.g. for logging or tests
         self.track = track  # track shared in-memory state automatically (see deja.autotrack)
         self.background = background  # order the app's background tasks (started at startup) like requests
+        self.group = group or os.environ.get("DEJA_GROUP")  # shared by worker processes (see deja.group)
+        self.worker = worker or f"pid{os.getpid()}"
         self.track_rules = {"skip": list(track_skip or ()), "only": list(track_only) if track_only is not None else None}
         self.tracked: list = []
         self._warned = False
@@ -107,6 +110,11 @@ class DejaMiddleware:
             rec.catalog["track"] = {**self.track_rules, "on": self.track}  # replay applies the same rules
             self.tracked, rec.catalog["source"] = prepare(scope.get("app") or self.app, self.track,
                                                           Rules(**self.track_rules))
+            if self.group:
+                from .group import Watcher
+
+                rec.group = (self.group, self.worker)
+                Watcher(rec, self.group, self.worker).start(asyncio.get_running_loop())
         if scope["type"] == "websocket":
             return await self._websocket(rec, scope, receive, send)
 
@@ -236,6 +244,13 @@ def save(rec, rid, reason, directory, on_dump=None):
     header["reason"] = reason
     header["request"] = rid
     events = rec.window(rid)  # snapshot on the loop thread; the file write happens off it
+    group = getattr(rec, "group", None)
+    if group:  # other workers of the group save the same time window (deja.group)
+        from .group import post
+
+        t0 = rec.first_time(events)
+        if t0 is not None:
+            header["group_request"] = post(group[0], t0, time.perf_counter_ns(), group[1], reason)
 
     def write():
         from .fileformat import write as write_file
