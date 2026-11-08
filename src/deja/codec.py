@@ -77,6 +77,8 @@ def encode(v):
         return {"__t": "decimal", "v": str(v)}
     if isinstance(v, uuid.UUID):
         return {"__t": "uuid", "v": str(v)}
+    if type(v).__name__ == "ObjectId" and type(v).__module__.startswith("bson"):
+        return {"__t": "oid", "v": str(v)}
     if isinstance(v, (list, tuple)):
         return {"__t": "tuple" if isinstance(v, tuple) else "list", "v": [encode(x) for x in v]}
     if isinstance(v, dict):
@@ -106,6 +108,15 @@ def decode(v):
         return decimal.Decimal(x)
     if t == "uuid":
         return uuid.UUID(x)
+    if t == "oid":
+        try:
+            from bson import ObjectId
+
+            return ObjectId(x)
+        except ImportError:
+            return x
+    if t == "mongo":  # a pymongo write result, as the report reads it
+        return {"type": v.get("type"), "value": decode(v["v"][0])}
     if t == "list":
         return [decode(i) for i in x]
     if t == "tuple":

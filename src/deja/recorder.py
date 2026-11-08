@@ -56,6 +56,10 @@ def _detail(op, key):
             what = text if text is not None else (f"<{len(data)} bytes>" if data is not None else
                                                    f"close {code}" if kind == "websocket.close" else kind)
             return {"message": str(what)[:2000]}
+        if op.startswith("mongo.") and isinstance(key, tuple) and len(key) == 4:
+            from .codec import decode
+
+            return {"collection": key[1], "method": key[2], "args": decode(key[3])}
         if op == "aws.call" and isinstance(key, tuple) and len(key) == 4:
             from .codec import decode
 

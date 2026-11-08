@@ -108,6 +108,65 @@ REDIS_READ = {"GET", "MGET", "HGET", "HGETALL", "HMGET", "HEXISTS", "HLEN", "EXI
 _REDIS_ALL_KEYS = {"MGET", "EXISTS", "DEL", "UNLINK", "WATCH", "TOUCH", "SUNION", "SINTER", "SDIFF"}
 
 
+_MONGO_READ = {"find", "find_one", "count_documents", "estimated_document_count", "distinct", "aggregate"}
+
+
+def _scalars(doc):
+    return {k: v for k, v in (doc or {}).items() if isinstance(k, str) and not k.startswith("$")
+            and not isinstance(v, (dict, list))}
+
+
+def _mongo_touches(d, raw):
+    """A collection call as SQL-like touches: a filter of plain equalities names one document (``users[email=x]``),
+    anything else covers the collection; an insert carries its fields so the analysis can match it by any key."""
+    table, method, a = d["collection"], d["method"], d.get("args") or {}
+    if method == "find":
+        flt, args = a.get("filter") or {}, []
+    else:
+        args, kw = a.get("args") or [], a.get("kwargs") or {}
+        flt = args[0] if args else kw.get("filter", {})
+    kind = "read" if method in _MONGO_READ else "write"
+    if method in ("insert_one", "insert_many"):
+        docs = args[0] if args else []
+        docs = docs if isinstance(docs, list) else [docs]
+        try:
+            result = codec.decode(raw) or {}
+        except Exception:
+            result = {}
+        ids = result.get("value") if isinstance(result, dict) else None
+        ids = ids if isinstance(ids, list) else [ids]
+        out = []
+        for i, doc in enumerate(docs):
+            w = _scalars(doc)
+            if i < len(ids) and ids[i] is not None:
+                w.setdefault("_id", ids[i])
+            key = {"_id": w["_id"]} if "_id" in w else ({k: w[k] for k in list(w)[:1]} if w else None)
+            out.append({"resource": _res(table, next(iter(key.items())) if key else None) if key else table,
+                        "kind": "write", "table": table, "rows": [key] if key else None, "precise": bool(key),
+                        "where": None, "writes": w, "insert": True})
+        return out
+    eq = {k: v for k, v in (flt or {}).items() if isinstance(k, str) and not k.startswith("$")
+          and not isinstance(v, (dict, list))}
+    precise = bool(eq) and len(eq) == len(flt or {})
+    writes = None
+    if kind == "write":
+        update = args[1] if len(args) > 1 else {}
+        writes = _scalars((update or {}).get("$set") if isinstance(update, dict) and "$set" in update else update)
+        for op_name in ("$inc", "$push", "$pull", "$unset"):
+            if isinstance(update, dict) and op_name in update:
+                writes.update({f"{k} ({op_name[1:]})": v for k, v in update[op_name].items()})
+        if method.startswith("delete") or method == "find_one_and_delete":
+            writes = {"(deleted)": True}
+    t = {"resource": (f"{table}[{', '.join(f'{k}={v}' for k, v in eq.items())}]" if precise else table),
+         "kind": kind, "table": table, "rows": [eq] if precise else None, "precise": precise,
+         "where": None if precise else (str(flt) if flt else None)}
+    if writes is not None:
+        t["writes"] = writes
+    if isinstance((a.get("kwargs") or {}), dict) and (a.get("kwargs") or {}).get("upsert"):
+        t["upsert"] = True
+    return [t]
+
+
 _AWS_READ = ("Get", "Head", "List", "Describe", "Query", "Scan", "BatchGet")
 
 
@@ -192,6 +251,8 @@ def call_touches(io: dict, kinds: dict | None = None) -> list[dict]:
         for c in d["commands"]:
             out += _redis_touches(c)
         return out
+    if op.startswith("mongo.") and d.get("collection"):
+        return _mongo_touches(d, io.get("raw"))
     if op == "aws.call" and d.get("operation"):
         return _aws_touches(d)
     if op in ("grpc.call", "grpc.stream") and d.get("method"):
