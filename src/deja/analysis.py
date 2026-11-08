@@ -202,13 +202,15 @@ def analyze(header: dict, events: list) -> dict:
             body = e[6]
             requests[e[1]] = {"id": f"q{e[1]}", "rid": e[1], "method": e[3], "path": e[4],
                               "body": body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else body,
-                              "start": t, "end": None, "status": None, "response": None, "seq": seq}
+                              "start": t, "end": None, "status": None, "response": None, "seq": seq,
+                              "kind": "websocket" if e[3] == "WS" else "http", "failed": False}
         elif code == ev.RESPONSE and e[1] in requests:
             t = stamp(e[4] if len(e) > 4 else None)
             body = e[3] if len(e) > 3 else b""
             r = requests[e[1]]
             r.update(end=t, status=e[2],
-                     response=body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else body)
+                     response=body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else body,
+                     failed=(e[2] == 1011) if r["method"] == "WS" else e[2] >= 500)
         elif code == ev.STEP and e[1] and e[1].startswith("q"):
             steps.append({"seq": seq, "t": now, "task": e[1], "req": _root(e[1])})
         elif code == ev.IO_START and e[1] and e[1].startswith("q"):
@@ -272,7 +274,7 @@ def analyze(header: dict, events: list) -> dict:
     for c in conflicts:
         c["names"] = {r: names.get(r, r) for r in (c["a"], c["b"])}
     story = _story(conflicts, requests, names, header, labels)
-    moments = _moments(conflicts, touches, names, labels)
+    moments = _moments(conflicts, touches, names, labels, requests)
     return {
         "requests": [requests[k] for k in sorted(requests)],
         "steps": steps, "ios": [{k: v for k, v in io.items() if k != "raw"} for io in ios],
@@ -615,16 +617,23 @@ def _story(conflicts, requests, names, header, labels):
     return text
 
 
-def _moments(conflicts, touches, names, labels):
+def _moments(conflicts, touches, names, labels, requests=None):
     if not conflicts:
         return []
     c = conflicts[0]
     reqs = {c["a"], c["b"]}
     lo, hi = min(c["seqs"]), max(c["seqs"])
     stale_seq = c["seqs"][1]
+    # the conflict's own accesses, and other accesses to the same things (not unrelated state in between)
+    involved = {t["resource"] for t in touches if t["seq"] in c["seqs"]} | {c["resource"]} | set(c.get("rows") or ())
+    other = "request"
+    if requests and any((requests.get(int(r[1:])) or {}).get("method") == "WS" for r in reqs):
+        other = "connection"
     out = []
     for t in sorted(touches, key=lambda t: t["seq"]):
         if t["req"] not in reqs or not (lo <= t["seq"] <= hi) or t.get("derived"):
+            continue
+        if t["seq"] not in c["seqs"] and t["resource"] not in involved and t.get("op") != "http.send":
             continue
         if t["kind"] == "call" and t["resource"] not in labels:  # unlabelled worker-thread calls are noise here
             continue
@@ -646,6 +655,6 @@ def _moments(conflicts, touches, names, labels):
         if t.get("thread"):
             text += " (in a worker thread)"
         out.append({"seq": t["seq"], "t": t["t"], "req": t["req"], "who": who, "text": text,
-                    "warning": "before the other request saved its change" if t["seq"] == stale_seq else None,
+                    "warning": f"before the other {other} saved its change" if t["seq"] == stale_seq else None,
                     "in_conflict": t["seq"] in c["seqs"], "resource": t["resource"], "kind": t["kind"]})
     return out

@@ -301,6 +301,11 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
         key = (getattr(func, "__qualname__", None) or type(func).__name__, args)
         if entry.digest != adapters.digest(key):
             self.deja.io_misses.append(f"{path}: worker-thread call {key[0]} with different arguments")
+        tpath = self.deja.thread_path(path)
+        if self.schedule.thread_gates[tpath]:  # it changed tracked state: run it again, in the recorded order
+            from .loop import _in_thread
+
+            return asyncio.SelectorEventLoop.run_in_executor(self, executor, _in_thread(self.deja, tpath, func), *args)
         fut = self.create_future()
         if entry.kind == "err":
             resolve, value = fut.set_exception, codec.decode_exc(entry.value)

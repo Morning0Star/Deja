@@ -40,6 +40,11 @@ def _detail(op, key):
             return {"args": [str(a)[:200] for a in list(key[1])[:20]]}
         if op == "redis.pipeline" and isinstance(key, tuple):
             return {"commands": str(key[1])[:2000]}
+        if op == "ws.send" and isinstance(key, tuple) and len(key) == 5:
+            _, kind, text, data, code = key
+            what = text if text is not None else (f"<{len(data)} bytes>" if data is not None else
+                                                   f"close {code}" if kind == "websocket.close" else kind)
+            return {"message": str(what)[:2000]}
         if op == "executor" and isinstance(key, tuple):
             return {"function": key[0], "args": repr(key[1])[:500]}
         if isinstance(key, tuple) and len(key) == 1:

@@ -46,14 +46,21 @@ configuration takes a different path, Déjà reports where the replay diverged i
 
 1. **Record.** A subclass of the standard asyncio event loop logs which task each loop pass ran (one integer per
    step, so recording is cheap), with stable task ids derived from where each task was created. A middleware marks
-   each HTTP request's task as request scope, and adapters for asyncpg (including SQLAlchemy async, cursors, bulk
-   copy and LISTEN/NOTIFY), httpx (including streamed bodies, chunk by chunk), redis and `run_in_executor` record
-   what each call returned. Everything sits in a fixed-size ring buffer; a 5xx, an exception or `deja.flag()` saves
-   the window around the failing request to a small `.deja` file.
-2. **Replay.** A replay loop with a virtual clock re-sends the recorded requests to a fresh copy of the app and only
-   lets request tasks run in the recorded order. Database, HTTP and worker-thread calls get their recorded answers;
-   the steps those libraries took internally are collapsed into the single step where the app resumed.
-3. **Check.** If the code no longer behaves as recorded (a task can't take its recorded step, or a query differs),
+   each HTTP request and each WebSocket connection as request scope, and adapters for asyncpg (including SQLAlchemy
+   async, transactions, cursors, bulk copy and LISTEN/NOTIFY), httpx (including streamed bodies, chunk by chunk),
+   redis and WebSocket messages record what each call returned. Plain `def` endpoints and `asyncio.to_thread` run in
+   worker threads; what those threads do to shared state is recorded under the request too. Everything sits in a
+   fixed-size ring buffer; a 5xx, an exception, close code 1011 or `deja.flag()` saves the window around the failing
+   request to a small `.deja` file.
+2. **Explain.** The report names the race (lost update, check-then-act, stale read), the two requests and the order
+   of their reads and writes. It finds them in SQL (rows, ranges evaluated against the recorded data, subqueries,
+   transactions counted at commit), Redis keys, outside HTTP calls and the app's in-memory state, which Déjà tracks
+   on its own: containers and objects the routes' code can reach, and module variables it reassigns.
+3. **Replay.** A replay loop with a virtual clock re-sends the recorded requests (and WebSocket messages) to a fresh
+   copy of the app and only lets request tasks run in the recorded order. Database, HTTP and blocking calls get
+   their recorded answers; worker threads run again and wait at each access to shared state until the recording
+   says it's their turn.
+4. **Check.** If the code no longer behaves as recorded (a task can't take its recorded step, or a query differs),
    replay stops and says where. Replaying a recorded race against a fixed version shows the fix blocks it.
 
 ## Results
@@ -81,17 +88,26 @@ happened and play it back. ([prior art](docs/DESIGN.md#2-what-exists-checked-202
 
 ## Not covered yet
 
-- anyio worker threads (`to_thread`), WebSockets, Postgres log and termination listeners.
-- Range queries (`WHERE price > 100`) are checked against the rows the recording shows (what a query returned,
-  what a write set). When the recorded data can't decide whether the range covered a row, the conflict stays
-  *possible*. Conditions Déjà can't evaluate (functions, `LIKE`, subqueries) also stay possible.
-- In-memory state is tracked automatically when the route handlers can reach it (module variables, closures, the
-  app's own objects, `app.state`) and it is a plain `dict`, `list` or `set` that can be swapped safely. Anything
-  else needs `deja.track(obj)` or `deja.touch`.
-- uvloop (record on the standard loop), threads and free-threaded builds, Python versions other than 3.12 and 3.14.
-- Worker-thread functions are not re-run during replay, so their side effects don't happen; only their results
-  come back.
-- Overhead target of 5% CPU not reached yet (about 12% measured).
+What Déjà can't decide, it says so ("possible conflict") rather than guess. The limits:
+
+- **SQL conditions** are evaluated against what the recording shows: the rows a query returned and the values a
+  write set. Values only the server knows (`now()`, defaults, sequences), functions Déjà doesn't evaluate, and rows
+  no recorded query showed leave a conflict *possible*. A subquery can prove a row matched, never that none did.
+- **Shared state** is found by following the routes' code. State held only by library objects, reached with
+  computed names (`getattr(obj, name)`), objects stored inside containers (`accounts[7].balance`: the read of
+  `accounts[7]` is reported, the attribute isn't), and classes with their own metaclass (pydantic models) need
+  `deja.track(obj)` or `deja.touch`. A container that something else also holds (a default argument, a tuple) is
+  left alone rather than split in two.
+- **Worker threads** are ordered at their accesses to shared state; work in between runs freely, and an access made
+  in the middle of an event-loop step replays just after it. Sync clients inside them (`requests`, psycopg,
+  sync SQLAlchemy) are not recorded, so they run for real during replay. A thread that waits on the event loop
+  (`anyio.from_thread`) between two accesses is released after the replay deadline.
+- **Long WebSocket connections**: a recording keeps what fits in the ring buffer. A connection whose start fell out
+  of it is left out of the replay; one still open when the recording was saved stays idle at its end.
+- Postgres log and termination listeners; uvloop (record on the standard loop); free-threaded builds; Python
+  versions other than 3.12 and 3.14.
+- Overhead target of 5% CPU not reached yet (about 12% measured; a tracked access costs about 6 µs inside a
+  recorded request and about 1 µs outside one).
 
 ## Requirements
 

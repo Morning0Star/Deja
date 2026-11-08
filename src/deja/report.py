@@ -171,8 +171,10 @@ const T_END = Math.max(D.duration_ms || 1, ...REQ.map(r => r.end ?? 0)) + 0.5;
 // I/O bars with a friendly label from what they touched
 const IOS = D.ios.map(io => {
   const t = (io.touches || [])[0];
-  const friendly = t ? (io.op === "http.send" ? "calls " + L(t.resource) : t.kind === "read" ? "reads " + L(t.resource)
-                   : t.kind === "write" ? "writes " + L(t.resource) : "runs " + L(t.resource)) : io.op;
+  const msg = io.op === "ws.receive" ? (io.result && io.result !== "None" ? "receives " + io.result : "waits for a message")
+            : io.op === "ws.send" ? "sends " + ((io.detail || {}).message || "") : null;
+  const friendly = msg || (t ? (io.op === "http.send" ? "calls " + L(t.resource) : t.kind === "read" ? "reads " + L(t.resource)
+                   : t.kind === "write" ? "writes " + L(t.resource) : "runs " + L(t.resource)) : io.op);
   return {...io, type: "io", friendly};
 });
 const TOUCH = D.touches.map(t => ({...t, type: "touch"}));
@@ -215,7 +217,7 @@ function draw() {
     if (r.start != null) { const x0 = X(r.start, w), x1 = X(r.end ?? T_END, w);
       g.strokeStyle = C.line2; g.lineWidth = 2; g.beginPath(); g.moveTo(x0, y + 50); g.lineTo(x1, y + 50); g.stroke(); g.lineWidth = 1;
       g.fillStyle = C.lime; g.beginPath(); g.moveTo(x0, y + 45); g.lineTo(x0 + 7, y + 50); g.lineTo(x0, y + 55); g.fill();
-      g.fillStyle = r.status >= 500 ? C.red : C.fg; g.fillRect(x1 - 5, y + 47, 6, 6);
+      g.fillStyle = r.failed ? C.red : C.fg; g.fillRect(x1 - 5, y + 47, 6, 6);
       hits.push([{type: "req", ...r}, x0 - 4, y + 42, x1 + 4, y + 58]); } });
   if (C0) { const x0 = X(C0.t0, w), x1 = X(C0.t1, w);
     [C0.a, C0.b].forEach(id => { const y = laneY(id); g.fillStyle = "rgba(255,61,94,.11)"; g.fillRect(x0, y - 3, x1 - x0, LANE - 8);
@@ -251,10 +253,10 @@ function draw() {
   REQ.forEach((r, i) => { const y = RULER + 8 + i * LANE;
     if (i) { g.strokeStyle = C.line; g.beginPath(); g.moveTo(0, y - 4.5); g.lineTo(LEFT - 2, y - 4.5); g.stroke(); }
     g.fillStyle = N[r.id] ? C.red : C.fg; g.font = "700 13px " + css("--display");
-    g.fillText(N[r.id] ? "Request " + N[r.id] : r.id, 10, y + 12);
+    g.fillText(N[r.id] ? NOUN(r.id) + " " + N[r.id] : r.id, 10, y + 12);
     g.fillStyle = C.muted; g.font = "11px " + css("--mono");
     const sub = L(r.method + " " + r.path.split("?")[0]); g.fillText(sub.length > (LEFT > 150 ? 26 : 11) ? sub.slice(0, LEFT > 150 ? 25 : 10) + "…" : sub, 10, y + 30);
-    g.fillText("status " + (r.status ?? "?"), 10, y + 46); });
+    g.fillText((r.kind === "websocket" ? "closed " : "status ") + (r.status ?? "?"), 10, y + 46); });
   drawMini();
 }
 function drawMini() { const [g, w, h] = size(mini); g.fillStyle = C.bg; g.fillRect(0, 0, w, h);
@@ -311,8 +313,9 @@ addEventListener("keydown", e => { if (e.target.tagName === "INPUT") return; con
   else if (e.key === "f" || e.key === "F") animateTo(T_MIN, T_END); });
 
 // ---------------------------------------------------------------- details
-const who = id => N[id] ? "Request " + N[id] + " (" + id + ")" : id;
+const who = id => N[id] ? NOUN(id) + " " + N[id] + " (" + id + ")" : id;
 const reqOf = id => D.requests.find(r => r.id === id) || {};
+function NOUN(id) { return (D.requests.find(r => r.id === id) || {}).kind === "websocket" ? "Connection" : "Request"; }
 const chips = ts => (ts || []).map(t => '<span class="touch ' + t.kind + '">' + t.kind.toUpperCase() + " " + esc(L(t.resource)) + "</span>").join("");
 function tipHtml(it) {
   if (it.type === "io") return "<b>" + esc(it.friendly) + "</b><br>" + esc(who(it.req)) + " · " + (it.t1 - it.t0).toFixed(2) + " ms<br>→ " + esc(it.result);
@@ -324,7 +327,8 @@ function select(it) {
   selected = it; draw(); if (!it) return;
   if (it.type === "io") { const d = it.detail || {}, r = reqOf(it.req);
     insp.innerHTML = '<header><div class="kind io">Recorded call · ' + esc(it.op) + '</div><h3>' + esc(it.friendly) + '</h3></header><dl>' +
-      '<dt>Request</dt><dd>' + esc(who(it.req)) + " · " + esc(r.method) + " " + esc(r.path) + '</dd>' +
+      '<dt>' + (r.kind === "websocket" ? "Connection" : "Request") + '</dt><dd>' + esc(who(it.req)) + " · " + esc(r.method) + " " + esc(r.path) + '</dd>' +
+      (d.message ? '<dt>Message</dt><dd><pre>' + esc(d.message) + '</pre></dd>' : '') +
       '<dt>Waited</dt><dd>' + it.t0.toFixed(2) + " to " + it.t1.toFixed(2) + " ms (" + (it.t1 - it.t0).toFixed(2) + ' ms)</dd>' +
       (d.sql ? '<dt>SQL</dt><dd><pre>' + esc(d.sql) + '</pre></dd><dt>Params</dt><dd>' + esc(JSON.stringify(d.params)) + '</dd>' : '') +
       (d.url ? '<dt>HTTP</dt><dd><pre>' + esc(d.method + " " + d.url + (d.body ? "\n" + d.body : "")) + '</pre></dd>' : '') +
@@ -334,8 +338,11 @@ function select(it) {
       '<dt>Replay</dt><dd>answered from the recording, no real call</dd></dl>'; }
   else if (it.type === "touch") { insp.innerHTML = '<header><div class="kind ' + (it.kind === "write" ? "bad" : "") + '">' + it.kind + '</div><h3>' + esc(who(it.req)) + " " + it.kind + "s " + esc(L(it.resource)) + '</h3></header><dl>' +
       '<dt>At</dt><dd>' + (it.t ?? 0).toFixed(2) + ' ms</dd>' + (it.kind === "read" ? '<dt>Got</dt><dd>' + esc(it.value) + '</dd>' : '<dt>Wrote</dt><dd>' + esc(JSON.stringify(it.writes)) + '</dd>') +
-      '<dt>Source</dt><dd>' + esc(it.source) + (it.op ? " · " + esc(it.op) : "") + '</dd><dt>Resource</dt><dd>' + esc(it.resource) + '</dd></dl>'; }
+      '<dt>Source</dt><dd>' + (it.source === "reported by the app" ? "in-memory state (tracked, or deja.touch)" + (it.thread ? " · in a worker thread" : "") : esc(it.source) + (it.op ? " · " + esc(it.op) : "")) + '</dd><dt>Resource</dt><dd>' + esc(it.resource) + '</dd></dl>'; }
   else if (it.type === "step") { insp.innerHTML = '<header><div class="kind">Code running</div><h3>' + esc(who(it.req)) + '</h3></header><dl><dt>Task</dt><dd>' + esc(it.task) + '</dd><dt>At</dt><dd>' + (it.t ?? 0).toFixed(2) + ' ms</dd><dt>Replay</dt><dd>replay forces this exact turn order</dd></dl>'; }
+  else if (it.kind === "websocket") { insp.innerHTML = '<header><div class="kind req">WebSocket connection</div><h3>' + esc(it.path) + '</h3></header><dl>' +
+      '<dt>Connection</dt><dd>' + esc(who(it.id)) + '</dd><dt>Time</dt><dd>' + (it.start ?? 0).toFixed(2) + " to " + (it.end ?? 0).toFixed(2) + ' ms</dd>' +
+      '<dt>Close code</dt><dd>' + esc(it.status ?? "still open") + '</dd><dt>Sent</dt><dd><pre>' + esc(it.response || "(nothing)") + '</pre></dd></dl>'; }
   else { insp.innerHTML = '<header><div class="kind req">Request</div><h3>' + esc(it.method) + " " + esc(it.path) + '</h3></header><dl>' +
       '<dt>Request</dt><dd>' + esc(who(it.id)) + '</dd><dt>Time</dt><dd>' + (it.start ?? 0).toFixed(2) + " to " + (it.end ?? 0).toFixed(2) + ' ms</dd>' +
       '<dt>Body</dt><dd><pre>' + esc(it.body || "(empty)") + '</pre></dd><dt>Status</dt><dd>' + esc(it.status) + '</dd><dt>Response</dt><dd><pre>' + esc(it.response) + '</pre></dd></dl>'; }
@@ -360,7 +367,7 @@ $("play").onclick = () => { if (timer) { clearInterval(timer); timer = null; $("
 
 // ---------------------------------------------------------------- resources
 const RES = [...new Set(TOUCH.filter(t => t.kind === "read" || t.kind === "write").map(t => t.resource))];
-$("res").querySelector("thead").innerHTML = "<tr><th>Resource</th>" + REQ.map(r => "<th>" + esc(N[r.id] ? "Request " + N[r.id] : r.id) + " · " + esc(L(r.method + " " + r.path.split("?")[0])) + "</th>").join("") + "</tr>";
+$("res").querySelector("thead").innerHTML = "<tr><th>Resource</th>" + REQ.map(r => "<th>" + esc(N[r.id] ? NOUN(r.id) + " " + N[r.id] : r.id) + " · " + esc(L(r.method + " " + r.path.split("?")[0])) + "</th>").join("") + "</tr>";
 const tb = $("res").querySelector("tbody");
 tb.innerHTML = RES.map(res => "<tr data-res=\"" + esc(res) + "\" class=\"" + (C0 && res === C0.resource ? "hot" : "") + "\" tabindex=\"0\"><td>" + esc(L(res)) + (L(res) !== res ? '<br><span style="color:var(--muted)">' + esc(res) + "</span>" : "") + "</td>" +
   REQ.map(r => "<td>" + (TOUCH.filter(t => t.req === r.id && t.resource === res && (t.kind === "read" || t.kind === "write")).map(t =>
@@ -383,7 +390,9 @@ if (MOMENTS.length) { const k = MOMENTS.findIndex(m => m.warning); goMoment(k >=
 
 
 def build(header: dict, events: list, replay=None, source: str = "") -> str:
-    """``replay``: None, or ``{"times", "matched", "summary"}``."""
+    """``replay``: None, a :class:`deja.replay.ReplayResult`, or ``{"times", "matched", "summary"}``."""
+    if replay is not None and not isinstance(replay, dict):  # one ReplayResult
+        replay = {"times": 1, "matched": int(replay.followed and replay.same_responses), "summary": replay.summary()}
     data = analyze(header, events)
     data["source"] = source
     data["replay"] = replay

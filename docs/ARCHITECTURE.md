@@ -162,7 +162,13 @@ Per loop pass (generalised from spike S3):
 | D17 | Record a notification when it reaches the app's listener, not when it arrives on the socket | The listener's run is the point the app observes; replay delivers it there to the listener the replayed app registered in the same order |
 | D18 | A streamed httpx body is one I/O call per chunk | Token streams are read with work between chunks; one call for the whole body would hide where requests interleaved and hang on endless streams |
 | D19 | A range touch is resolved per row before conflicts are built | The rows a query returned, or the condition evaluated on recorded column values, decide most rows; only rows the data can't decide stay "possible" |
-| D20 | Auto-track only plain dict / list / set and only when every referrer can be rebound | A tracked copy replaces the object; a reference Déjà can't rebind (a default argument, a tuple, a running coroutine) would split the state in two |
+| D20 | Auto-track only containers of known exact types and only when every referrer can be rebound | A tracked copy replaces the object; a reference Déjà can't rebind (a default argument, a tuple, a local of a running function) would split the state in two |
+| D21 | Worker threads run again in replay, ordered at their accesses to tracked state | A thread runs app code (a plain `def` endpoint), so its result can't just be handed back; gating each tracked access (the thread waits for its schedule entry, the loop waits for the thread to park again) reproduces the interleaving that matters to the report without controlling the GIL |
+| D22 | Every tracked operation announces itself before it runs, and reports after | A thread must wait for its turn before it reads; reporting after keeps the value it saw. Operations that report two accesses (`setdefault` on a new key) take two turns up front |
+| D23 | An executor call (`asyncio.to_thread`) runs again only if it touched tracked state | Blocking I/O in a helper must not happen twice, but a helper that changes shared state has to, or the replayed state drifts |
+| D24 | A WebSocket message, in or out, is one recorded I/O call; the connection is request scope | Replay then needs no client and checks what the app sent; a flag mid-connection saves when the app next waits, so long-lived connections don't have to end first |
+| D25 | Writes inside a database transaction count when it commits; reads of a statement that also writes count when it starts | That is when other requests can see the write, and when a guarded insert's check ran; a rollback drops its writes |
+| D26 | Module variables reassigned with `global` are watched with `sys.monitoring` line events, only on the functions that use them | Names can't be swapped like containers; local events cost nothing elsewhere, and a write is reported on the next line event, after the store |
 
 ## 5. Testing strategy
 
@@ -233,6 +239,16 @@ Per loop pass (generalised from spike S3):
   shows, and two requests that both found a range empty and both inserted into it are reported as check-then-act on
   the range. Iterating or `len()` of tracked state is a whole-container read with the keys it saw. The middleware
   tracks shared state automatically on the first request (`deja.autotrack`). 76 tests on 3.12 and 3.14.
+
+- **Threads, WebSockets, SQL conditions, more state** (2026-11-08): anyio worker threads and executor calls get
+  thread paths under their request (`q3.t0`); replay runs them again and gates every tracked access (D21-D23). The
+  middleware records WebSocket connections message by message, and the harness replays them without a client, with
+  or without the middleware in the replayed app (D24). The condition evaluator handles `LIKE` / `ILIKE`, regex,
+  arithmetic, casts, common functions and subqueries against the inner table's known rows; guarded inserts (`INSERT
+  ... SELECT ... WHERE NOT EXISTS`) and transactions are modelled (D25). Tracking covers `defaultdict`,
+  `OrderedDict`, `Counter`, `deque` and the remaining mutators; autotrack follows the functions, classes and modules
+  the routes use, tracks app objects whose attributes request code assigns, and watches `global` variables (D26).
+  Report: connections and messages, worker threads, close codes. 108 tests on 3.12 and 3.14.
 
 ## 8. Milestones (revised)
 

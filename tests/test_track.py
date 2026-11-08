@@ -98,3 +98,76 @@ def test_iteration_and_len_report_a_whole_container_read():
     assert ("carts[*]", "read", ["a", "b"]) in got and ("users[username=*]", "read", ["ada"]) in got
     import copy
     assert type(copy.copy(d)) is dict and type(copy.deepcopy(users)) is list
+
+
+def test_defaultdict_counter_ordereddict_keep_their_behaviour():
+    import collections
+    import copy
+    import pickle
+
+    holds = deja.track(collections.defaultdict(list), "holds")
+    sales = deja.track(collections.Counter(), "sales")
+    lru = deja.track(collections.OrderedDict(a=1, b=2), "lru")
+
+    def work():
+        holds["x"].append(1)  # missing key: default_factory runs, and it is reported
+        sales["y"] += 2
+        sales.update(["y", "z"])
+        lru.move_to_end("a")
+        lru.popitem(last=False)
+
+    got = touches_from(work)
+    assert ("holds[x]", "write", codec.encode([1])) in got or any(r == "holds[x]" and k == "write" for r, k, _ in got)
+    assert ("sales[y]", "read", 0) in got and ("sales[y]", "write", 2) in got and ("sales[y]", "write", 3) in got
+    assert ("sales[z]", "write", 1) in got
+    assert ("lru[a]", "write", "(moved)") in got and ("lru[b]", "write", None) in got
+    assert holds["x"] == [1] and holds["new"] == [] and sales == {"y": 3, "z": 1} and list(lru) == ["a"]
+    # copies and pickles are plain containers of the original type
+    for obj, base in ((holds, collections.defaultdict), (sales, collections.Counter), (lru, collections.OrderedDict)):
+        for c in (copy.copy(obj), obj.copy(), pickle.loads(pickle.dumps(obj))):
+            assert type(c) is base and c == obj
+
+
+def test_deque_list_and_set_mutations():
+    import collections
+
+    jobs = deja.track(collections.deque(maxlen=5), "jobs")
+    seats = deja.track([], "seats")
+    tags = deja.track({"a"}, "tags")
+
+    def work():
+        nonlocal tags
+        jobs.append("j1")
+        jobs.appendleft("j0")
+        assert jobs.popleft() == "j0"
+        seats.extend(["s1", "s2"])
+        seats.insert(0, "s0")
+        assert seats.pop() == "s2"
+        seats[0] = "z"
+        tags |= {"b"}
+        tags.update(["c"])
+        tags -= {"a"}
+        with pytest.raises(KeyError):
+            tags.remove("missing")
+        tags.clear()
+
+    got = touches_from(work)
+    assert ("jobs[j1]", "write", "j1") in got and ("jobs[j0]", "write", None) in got
+    assert [g for g in got if g[0].startswith("seats[s")] == [
+        ("seats[s1]", "write", "s1"), ("seats[s2]", "write", "s2"), ("seats[s0]", "write", "s0"),
+        ("seats[s2]", "write", None)]
+    assert ("seats[*]", "write", None) in got  # assignment by index
+    assert ("tags[b]", "write", "b") in got and ("tags[c]", "write", "c") in got and ("tags[a]", "write", None) in got
+    assert ("tags[missing]", "read", False) in got and ("tags[*]", "write", None) in got
+    assert type(jobs.copy()) is collections.deque and jobs.maxlen == 5 and list(jobs) == ["j1"]
+    assert seats == ["z", "s1"] and tags == set()
+
+
+def test_failed_lookup_is_a_read_of_nothing():
+    d = deja.track({}, "d")
+
+    def work():
+        with pytest.raises(KeyError):
+            d["k"]
+
+    assert touches_from(work) == [("d[k]", "read", None)]

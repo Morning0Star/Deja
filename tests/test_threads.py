@@ -121,3 +121,47 @@ def test_replay_orders_threads_even_when_timing_changes(tmp_path):
     assert [r.json()["winner"] for r in out["r"]] == [None, "b"]
     r = replay(path, lambda: slow_app(slow="b"), deadline_s=5)  # now b is the slow one
     assert r.followed and r.same_responses, r.summary()
+
+
+def to_thread_app(slow, calls):
+    """asyncio.to_thread (loop.run_in_executor underneath): one helper changes shared state, one only does I/O."""
+    app = FastAPI()
+    stock = {"widget": 1}
+
+    def take(name):
+        time.sleep(0.15 if name == slow else 0)
+        if stock["widget"] > 0:
+            stock["widget"] -= 1
+            return name
+        return None
+
+    def lookup(name):  # blocking I/O, no shared state: its result comes back from the recording in replay
+        calls.append(name)
+        return f"profile of {name}"
+
+    @app.post("/take/{name}")
+    async def take_route(name: str):
+        profile = await asyncio.to_thread(lookup, name)
+        return {"winner": await asyncio.to_thread(take, name), "profile": profile}
+
+    return app
+
+
+def test_asyncio_to_thread_reruns_only_calls_that_changed_state(tmp_path):
+    path, calls = str(tmp_path / "to_thread.deja"), []
+    out = {}
+
+    async def main():
+        app = to_thread_app("a", calls)
+        app.add_middleware(deja.DejaMiddleware, directory=str(tmp_path))
+        rec = asyncio.get_running_loop().deja
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://app") as client:
+            marker = rec.mark("test")
+            out["r"] = await asyncio.gather(client.post("/take/a"), client.post("/take/b"))
+            rec.dump(path, since=marker)
+
+    asyncio.run(main(), loop_factory=recording_loop)
+    assert [r.json()["winner"] for r in out["r"]] == [None, "b"] and sorted(calls) == ["a", "b"]
+    r = replay(path, lambda: to_thread_app("b", calls), deadline_s=5)
+    assert r.followed and r.same_responses, r.summary()
+    assert sorted(calls) == ["a", "b"], "the I/O-only helper must not run again during replay"

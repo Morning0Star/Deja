@@ -198,6 +198,8 @@ class _MappingOps(_Tracked):
         make, args = self.__reduce__()[:2]
         return make(*args)
 
+    __copy__ = copy
+
 
 class TrackedDict(_MappingOps, dict):
     __slots__ = ("_deja_name", "_deja_key")

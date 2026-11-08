@@ -23,6 +23,21 @@ _perf_ns = time.perf_counter_ns  # one read per loop pass gives the report a rea
 _Task = asyncio.Task
 
 
+def _in_thread(rec, tpath, func):
+    """``func`` running as worker-thread call ``tpath``: what it reports goes to ``rec`` under that path."""
+    from .threads import _thread
+
+    def runner(*a):
+        token = _thread.set((rec, tpath))
+        try:
+            return func(*a)
+        finally:
+            rec.thread_end(tpath)
+            _thread.reset(token)
+
+    return runner
+
+
 class _RecordingMixin:
     deja: Recorder
 
@@ -68,18 +83,20 @@ class _RecordingMixin:
 
     # ------------------------------------------------------------------ worker-thread calls
     def run_in_executor(self, executor, func, *args):
-        """Record what a worker-thread call returned (inside request scope), so replay needs no real threads.
+        """Record what a worker-thread call returned (inside request scope; ``asyncio.to_thread`` comes here too).
 
-        The function's side effects do not happen during replay; only its return value (or exception) comes back.
+        The call runs under a thread path (``q3.t0``, see :mod:`deja.threads`), so tracked state it touches is
+        recorded. Replay runs it again only if it did touch tracked state; otherwise its result (or exception) comes
+        back from the recording without running it, so blocking I/O in it doesn't happen twice.
         """
-        fut = super().run_in_executor(executor, func, *args)
         rec = self.deja
         if getattr(rec, "replaying", False) or adapters._inside.get():
-            return fut
+            return super().run_in_executor(executor, func, *args)
         path = rec.current_path()
         if path is None or not path.startswith("q"):
-            return fut
+            return super().run_in_executor(executor, func, *args)
         key = (getattr(func, "__qualname__", None) or type(func).__name__, args)
+        fut = super().run_in_executor(executor, _in_thread(rec, rec.thread_path(path), func), *args)
         rec.io_start(path, adapters.EXECUTOR_OP)
 
         def done(f):
