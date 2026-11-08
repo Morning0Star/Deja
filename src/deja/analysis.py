@@ -14,6 +14,7 @@ from . import codec
 from . import events as ev
 from . import sqltouch
 from .sqltouch import Expr as _Expr
+from .threads import is_thread_path
 
 # ---------------------------------------------------------------------- SQL -> resources (rule based)
 _TABLE = r'([A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)?|"[^"]+")'
@@ -179,6 +180,8 @@ def analyze(header: dict, events: list) -> dict:
     open_io: dict[str, dict] = {}
     steps: list[dict] = []
     touches: list[dict] = []
+    messages: dict[str, int] = defaultdict(int)  # WebSocket connection -> messages received so far
+    tx: dict[str, list] = {}  # task -> stack of the writes made in each open transaction / savepoint
 
     def stamp(t):
         nonlocal t_base, now
@@ -222,17 +225,47 @@ def analyze(header: dict, events: list) -> dict:
                 decoded = codec.decode(e[5])
             except Exception:
                 decoded = e[5]
+            if e[2] == "ws.receive" and isinstance(decoded, dict) and decoded.get("type") == "websocket.receive":
+                messages[io["req"]] += 1
+            both = any(x["kind"] == "write" for x in io["touches"]) and any(x["kind"] == "read" for x in io["touches"])
+            inserted = _inserted(decoded)
             for tch in io["touches"]:
-                touches.append({**tch, "seq": seq, "t": t1, "req": io["req"], "task": e[1], "op": e[2],
-                                "value": decoded if tch["kind"] == "read" else None, "_result": decoded,
-                                "result": io["result"], "source": "recorded call"})
+                if tch["kind"] == "write" and tch.get("insert") and inserted == 0:
+                    continue  # INSERT 0 0: its guard found a row, nothing was written
+                value = decoded if tch["kind"] == "read" else None
+                if tch.get("guard") and inserted is not None:  # WHERE NOT EXISTS (...): inserted iff it found nothing
+                    value = [] if inserted else True
+                # a statement that reads and then writes (a guarded insert, UPDATE ... FROM) reads when it starts:
+                # two that overlap in the database both read before either wrote
+                at_start = both and tch["kind"] == "read"
+                row = {**tch, "seq": io["seq0"] if at_start else seq, "t": io["t0"] if at_start else t1,
+                       "req": io["req"], "task": e[1], "op": e[2], "value": value, "_result": decoded,
+                       "result": io["result"], "source": "recorded call"}
+                if tch["kind"] == "write" and tx.get(e[1]):
+                    tx[e[1]][-1].append(row)  # inside a transaction: other requests see it once it commits
+                else:
+                    touches.append(row)
+            if e[2] == "pg.tx.start" and e[4] == "ok":
+                tx.setdefault(e[1], []).append([])
+            elif e[2] in ("pg.tx.commit", "pg.tx.rollback") and tx.get(e[1]):
+                done = tx[e[1]].pop()
+                if e[2] == "pg.tx.rollback" or e[4] != "ok":
+                    pass  # rolled back: those writes never happened
+                elif tx[e[1]]:
+                    tx[e[1]][-1].extend(done)  # a savepoint released into the transaction around it
+                else:
+                    touches.extend({**w, "seq": seq, "t": t1, "committed": True} for w in done)
         elif code == ev.TOUCH and e[1] and e[1].startswith("q"):
             t = stamp(e[5] if len(e) > 5 else None)
             touches.append({"resource": e[2], "kind": e[3], "seq": seq, "t": t, "req": _root(e[1]), "task": e[1],
                             "op": "deja.touch", "value": codec.decode(e[4]),
                             "writes": {"value": codec.decode(e[4])} if e[3] == "write" else None,
-                            "source": "reported by the app"})
+                            "source": "reported by the app", "message": messages.get(_root(e[1])) or None,
+                            "thread": is_thread_path(e[1])})
 
+    for stack in tx.values():  # still open when the recording ends: not visible to anyone yet
+        stack.clear()
+    touches.sort(key=lambda t: t["seq"])
     touches = _narrow(touches)
     conflicts = _conflicts(touches)
     names = _names(conflicts, requests)
@@ -248,6 +281,16 @@ def analyze(header: dict, events: list) -> dict:
         "conflicts": conflicts, "story": story, "moments": moments, "names": names, "labels": labels,
         "reason": header.get("reason"), "duration_ms": now or 0,
     }
+
+
+def _inserted(result):
+    """Rows an INSERT wrote, from its result: the status string (``INSERT 0 1``) or the rows RETURNING gave."""
+    if isinstance(result, str):
+        m = re.fullmatch(r"INSERT \d+ (\d+)", result.strip())
+        return int(m.group(1)) if m else None
+    if isinstance(result, list):
+        return len(result)
+    return None
 
 
 def _absent(v):
@@ -331,6 +374,12 @@ def _narrow(touches):
         out.append(t)
         if t["kind"] not in ("read", "write"):
             continue
+        if t.get("insert") and t.get("precise") and t.get("writes"):
+            w = {k: v for k, v in t["writes"].items() if k[0] != "(" and not isinstance(v, _Expr)}
+            for cols in keysets.get(t["table"], []):
+                alias = _row_res(t["table"], cols, w) if all(c in w for c in cols) else None
+                if alias and alias != t["resource"] and alias in rows_of[t["table"]]:
+                    out.append({**t, "resource": alias, "rows": [{c: w[c] for c in cols}], "derived": True})
         if t.get("source") == "reported by the app":
             if t["resource"].endswith("*]"):
                 prefix, snap = t["resource"][:-2], t.get("value")
@@ -364,7 +413,9 @@ def _narrow(touches):
                 if everything:
                     decided = True
                 elif match is not None:
-                    decided = match(_values_at(known, r, t["seq"]))
+                    decided = match(_values_at(known, r, t["seq"]),
+                                    lambda table, seq=t["seq"]: [_values_at(known, x, seq) for x in
+                                                                 sorted(rows_of.get(table, ()))])
                 else:
                     decided = None
                 # not among the rows returned: the row was not there (yet) when the query ran
@@ -507,7 +558,13 @@ def _label(text, labels):
 
 
 def _req_label(req, labels):
+    if req.get("method") == "WS":
+        return _label(f"WebSocket {req['path'].split('?')[0]}", labels)
     return _label(f"{req['method']} {req['path'].split('?')[0]}", labels)
+
+
+def _noun(req):
+    return "connection" if req.get("method") == "WS" else "request"
 
 
 def _story(conflicts, requests, names, header, labels):
@@ -520,8 +577,12 @@ def _story(conflicts, requests, names, header, labels):
     rb = requests.get(int(c["b"][1:]), {})
     A, B, res = names[c["a"]], names[c["b"]], _label(c["resource"], labels)
     what_a, what_b = _req_label(ra, labels) if ra else c["a"], _req_label(rb, labels) if rb else c["b"]
-    who = (f"Two {what_a} requests ({A} and {B})" if what_a == what_b
-           else f"Request {A} ({what_a}) and request {B} ({what_b})")
+    if what_a == what_b:
+        noun = _noun(ra)
+        who = (f"Two connections to {ra['path'].split('?')[0]} ({A} and {B})" if noun == "connection"
+               else f"Two {what_a} requests ({A} and {B})")
+    else:
+        who = f"{_noun(ra).capitalize()} {A} ({what_a}) and {_noun(rb)} {B} ({what_b})"
     if c["pattern"] == "lost-update":
         last = names[c["last_writer"]]
         first = A if last == B else B
@@ -580,6 +641,10 @@ def _moments(conflicts, touches, names, labels):
             text = f"{who} writes {res} ({_fmt_writes(t.get('writes'))})"
         else:
             text = f"{who} calls {res}"
+        if t.get("message"):
+            text += f" (message {t['message']})"
+        if t.get("thread"):
+            text += " (in a worker thread)"
         out.append({"seq": t["seq"], "t": t["t"], "req": t["req"], "who": who, "text": text,
                     "warning": "before the other request saved its change" if t["seq"] == stale_seq else None,
                     "in_conflict": t["seq"] in c["seqs"], "resource": t["resource"], "kind": t["kind"]})

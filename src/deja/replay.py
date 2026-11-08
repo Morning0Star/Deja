@@ -19,12 +19,14 @@ Values the app read from clocks / random / uuid inside request scope are handed 
 import asyncio
 import collections
 import contextvars
+import threading
 import time as _time
 
 from . import events as ev
 from .fileformat import read as read_file
 from .loop import _RecordingMixin
 from .recorder import Recorder
+from .threads import is_thread_path
 
 _replay_rid: contextvars.ContextVar = contextvars.ContextVar("deja_replay_rid", default=None)
 _real_monotonic = _time.monotonic
@@ -62,8 +64,11 @@ class Schedule:
         entries: list = []
         open_io: dict[str, dict] = {}
         ignored: set[str] = set()
+        started: set[str] = set()  # "q{rid}" of the requests whose start is in the recording
 
         def is_ignored(path):
+            if path.split(".", 1)[0] not in started:  # began before the recording window: can't be replayed
+                return True
             return any(path == p or path.startswith(p + ".") for p in ignored)
 
         for e in events:
@@ -71,6 +76,7 @@ class Schedule:
             if code == ev.REQUEST:
                 entries.append(("start", e[1]))
                 self.requests[e[1]] = e
+                started.add(f"q{e[1]}")
             elif code == ev.BATCH:
                 for call in open_io.values():
                     call["passes"] += 1
@@ -87,7 +93,7 @@ class Schedule:
                     if parent in open_io:
                         open_io[parent]["kids"] += 1
                     ignored.add(path)
-            elif code == ev.IO_START and e[1] and e[1].startswith("q"):
+            elif code == ev.IO_START and e[1] and e[1].startswith("q") and not is_ignored(e[1]):
                 open_io[e[1]] = {"op": e[2], "steps": [], "kids": 0, "passes": 0}
             elif code == ev.IO_END and e[1] in open_io:
                 call = open_io.pop(e[1])
@@ -104,7 +110,10 @@ class Schedule:
                 self.responses[e[1]] = (e[2], e[3] if len(e) > 3 else b"")
             elif code == ev.NOTIFY:
                 entries.append(("notify", tuple(e[1:5])))
+            elif code == ev.TOUCH and is_thread_path(e[1]) and e[1].startswith("q") and not is_ignored(e[1]):
+                entries.append(("thread", e[1]))  # a worker thread's access to tracked state: replay gates it here
         self.entries = [x for x in entries if x is not None]
+        self.thread_gates = collections.Counter(v for k, v in self.entries if k == "thread")
 
     @classmethod
     def load(cls, path: str) -> "Schedule":
@@ -112,7 +121,11 @@ class Schedule:
 
     def expected_path(self, i: int) -> str:
         kind, val = self.entries[i]
-        return f"q{val}" if kind == "start" else f"notification on {val[2]}" if kind == "notify" else val
+        if kind == "start":
+            return f"q{val}"
+        if kind == "notify":
+            return f"notification on {val[2]}"
+        return f"worker thread {val}" if kind == "thread" else val
 
     def __len__(self):
         return len(self.entries)
@@ -132,6 +145,61 @@ class ReplayRecorder(Recorder):
         self.io_misses: list[str] = []
         self._io = {k: collections.deque(v) for k, v in schedule.io.items()}
         self.listeners: dict[int, tuple] = {}  # listener id -> (connection, channel, callback), see adapters.asyncpg
+        self.ended: dict[int, tuple] = {}  # rid -> (status, body) as the middleware reported it (WebSockets)
+        # worker threads (deja.threads): how many tracked accesses each thread call has reached / been let through
+        self._gate = threading.Condition()
+        self._arrived: collections.Counter = collections.Counter()
+        self._granted: collections.Counter = collections.Counter()
+        self._finished: set = set()
+        self._released = False
+        self.gate_timeout = 10.0
+
+    # ------------------------------------------------------------------ worker threads
+    def thread_gate(self, path):
+        """In a worker thread: wait until the schedule reaches this thread's next recorded access."""
+        with self._gate:
+            k = self._arrived[path]
+            self._arrived[path] = k + 1
+            self._gate.notify_all()
+            if k >= self.schedule.thread_gates[path]:
+                return  # an access the recording doesn't have: nothing to order it against
+            deadline = _real_monotonic() + self.gate_timeout
+            while self._granted[path] <= k and not self._released:
+                left = deadline - _real_monotonic()
+                if left <= 0:
+                    self.io_misses.append(f"{path}: worker thread waited too long for its turn")
+                    return
+                self._gate.wait(left)
+
+    def thread_end(self, path):
+        with self._gate:
+            self._finished.add(path)
+            self._gate.notify_all()
+
+    def thread_turn(self, path, timeout) -> bool:
+        """On the loop: let ``path`` through its next access, and wait until it has done it (it parks at its next
+        access or returns). False if the thread didn't get there in time."""
+        with self._gate:
+            k = self._granted[path]
+            end = _real_monotonic() + timeout
+            while self._arrived[path] <= k and path not in self._finished:  # not at this access yet
+                left = end - _real_monotonic()
+                if left <= 0:
+                    return False
+                self._gate.wait(left)
+            self._granted[path] = k + 1
+            self._gate.notify_all()
+            while self._arrived[path] <= k + 1 and path not in self._finished:  # doing it, then on to the next
+                left = end - _real_monotonic()
+                if left <= 0:
+                    return False
+                self._gate.wait(left)
+            return True
+
+    def release_threads(self):
+        with self._gate:
+            self._released = True
+            self._gate.notify_all()
 
     def request_start(self, method, path, headers, body) -> int:
         rid = _replay_rid.get()
@@ -140,6 +208,7 @@ class ReplayRecorder(Recorder):
 
     def request_end(self, rid, status, body=b""):
         self.buffer.append((ev.RESPONSE, rid, status, body[:65536], None))
+        self.ended[rid] = (status, body[:65536])
 
     def forget_request(self, rid):
         pass
@@ -173,6 +242,10 @@ class ReplayRecorder(Recorder):
         from .adapters import OPTIONAL_OPS
 
         queue = self._io.get(path)
+        if op == "ws.receive" and not queue and path.startswith("q") and "." not in path:
+            if int(path[1:]) not in self.schedule.responses:
+                # the connection was still open when the recording was saved: the client sent nothing more
+                await asyncio.get_running_loop().create_future()
         # A client-side cache can make an optional call (prepare) happen in one run and not the other: the recorded
         # app had the statement cached from before the recorded window, or the fresh replay app has it cached now.
         if op in OPTIONAL_OPS and (not queue or queue[0].op != op):
@@ -358,6 +431,13 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
                 return
 
             kind, val = sched.entries[self.pos]
+            if kind == "thread":
+                self.pos += 1
+                if not self.deja.thread_turn(val, self.deadline_s):
+                    self.deja.io_misses.append(f"{val}: worker thread did not reach its recorded access")
+                self.trace.append(val)
+                self._progress()
+                continue
             if kind == "notify":
                 self.pos += 1
                 self._deliver(*val)
@@ -413,6 +493,8 @@ class ASGIHarness:
         _replay_rid.set(rid)
         q = self.loop.schedule.requests[rid]
         _, _, _, method, target, headers, body = q[:7]
+        if method == "WS":
+            return await self._serve_websocket(rid, target, headers)
         path, _, query = target.partition("?")
         scope = {
             "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": method, "scheme": "http",
@@ -447,6 +529,41 @@ class ASGIHarness:
             self.results[rid] = (status or 500, f"{type(exc).__name__}: {exc}".encode())
             return
         self.results[rid] = (status, b"".join(out))
+
+    async def _serve_websocket(self, rid, target, headers):
+        """A recorded WebSocket connection: the client's messages come back from the recording."""
+        from . import codec
+        from .adapters import digest
+        from .asgi import WS_ERROR, WS_RECEIVE, WS_SEND, ws_send_key, ws_transcript
+
+        path, _, query = target.partition("?")
+        scope = {
+            "type": "websocket", "asgi": {"version": "3.0"}, "http_version": "1.1", "scheme": "ws", "path": path,
+            "raw_path": path.encode("latin-1"), "query_string": query.encode("latin-1"), "root_path": "",
+            "headers": [(k.encode("latin-1"), v.encode("latin-1")) for k, v in headers],
+            "client": ("127.0.0.1", 50000), "server": ("deja-replay", 80), "subprotocols": [],
+            "state": dict(self.state),
+        }
+        rec, sent, me = self.loop.deja, [], f"q{rid}"
+
+        async def receive():  # only reached when the replayed app has no DejaMiddleware (it answers these itself)
+            return await rec.io_replay(me, WS_RECEIVE, digest((WS_RECEIVE,)), codec.decode)
+
+        async def send(message):
+            if message.get("type") in ("websocket.send", "websocket.close"):
+                sent.append(message)
+            await rec.io_replay(me, WS_SEND, digest(ws_send_key(message)), codec.decode)
+
+        code = None
+        try:
+            await self.app(scope, receive, send)
+        except Exception:
+            code = WS_ERROR
+        if rid in rec.ended:  # the app's own DejaMiddleware saw the connection
+            self.results[rid] = rec.ended[rid]
+        else:
+            closed = next((m.get("code", 1000) for m in sent if m.get("type") == "websocket.close"), None)
+            self.results[rid] = (code or closed or 1000, ws_transcript(sent))
 
     async def startup(self):
         inbox, outbox = asyncio.Queue(), asyncio.Queue()
@@ -524,8 +641,11 @@ def _fmt(resp):
     return f"{status} {text[:80]}"
 
 
-def replay(recording, app_factory, deadline_s: float = 10.0) -> ReplayResult:
-    """Replay ``recording`` (a path or a Schedule) against a fresh app from ``app_factory()``."""
+def replay(recording, app_factory, deadline_s: float = 10.0, track: bool = True) -> ReplayResult:
+    """Replay ``recording`` (a path or a Schedule) against a fresh app from ``app_factory()``.
+
+    ``track`` tracks the app's shared in-memory state as :class:`deja.DejaMiddleware` does (see
+    :mod:`deja.autotrack`); replay needs it to put worker threads' accesses in the recorded order."""
     schedule = recording if isinstance(recording, Schedule) else Schedule.load(recording)
     loop = ReplayLoop(schedule, deadline_s=deadline_s)
     app = app_factory()
@@ -535,9 +655,14 @@ def replay(recording, app_factory, deadline_s: float = 10.0) -> ReplayResult:
 
     async def drive():
         await harness.startup()
+        if track:  # as the middleware does on the first request: worker threads are ordered by tracked accesses
+            from .autotrack import auto_track
+
+            auto_track(app)
         loop.armed = True
         await loop.done.wait()
-        pending = [t for t in harness.tasks.values() if not t.done()]
+        # connections still open at the end of the recording stay open: don't wait for those
+        pending = [t for rid, t in harness.tasks.items() if not t.done() and rid in schedule.responses]
         if pending:
             await asyncio.wait(pending, timeout=deadline_s)
         await harness.shutdown()
@@ -547,6 +672,7 @@ def replay(recording, app_factory, deadline_s: float = 10.0) -> ReplayResult:
     except Divergence as d:
         divergence = str(d)
     finally:
+        loop.deja.release_threads()
         try:
             for t in asyncio.all_tasks(loop):
                 t.cancel()

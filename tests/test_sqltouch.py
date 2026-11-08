@@ -117,3 +117,100 @@ def test_range_read_that_missed_a_row_inserted_later_is_check_then_act():
     assert c["resource"] == "bookings WHERE room = 5 AND day BETWEEN 10 AND 12"
     assert "both found no rows" in a["story"] and "bookings[id=101]" in a["story"]
 
+
+
+def range_vs_row(cond, params, row, extra=()):
+    """Request 1 flags every item matching ``cond``; request 2 reads item 7 (``row``) and then updates it."""
+    rec = codec.encode([codec.FakeRecord(list(row), list(row.values()))])
+    n = len(params)
+    return [
+        (ev.REQUEST, 1, "r0", "POST", "/flag", [], b"", 0),
+        (ev.REQUEST, 2, "r0", "POST", "/buy", [], b"", 1),
+        *extra,
+        *_io("q1", f"SELECT count(*) FROM items WHERE {cond}", list(params), 1, 10),
+        *_io("q2", "SELECT * FROM items WHERE id = $1", [7], rec, 20),
+        *_io("q1", f"UPDATE items SET flagged = true WHERE {cond}", list(params), "UPDATE 1", 30),
+        *_io("q2", f"UPDATE items SET qty = ${n + 1} WHERE id = ${n + 2}", list(params) + [3, 7], "UPDATE 1", 40),
+        (ev.RESPONSE, 1, 200, b"", 50), (ev.RESPONSE, 2, 200, b"", 51),
+    ]
+
+
+@pytest.mark.parametrize("cond, params, row, expected", [
+    ("name LIKE $1", ["wid%"], {"id": 7, "name": "widget"}, "certain"),
+    ("name LIKE $1", ["wid%"], {"id": 7, "name": "gadget"}, None),
+    ("name ILIKE $1", ["%GET"], {"id": 7, "name": "widget"}, "certain"),
+    ("NOT name LIKE 'w_dget'", [], {"id": 7, "name": "widget"}, None),
+    ("name ~ $1", ["^w"], {"id": 7, "name": "widget"}, "certain"),
+    ("lower(name) = $1", ["widget"], {"id": 7, "name": "WiDgEt"}, "certain"),
+    ("qty - $1 < 0", [5], {"id": 7, "qty": 3}, "certain"),
+    ("qty - $1 < 0", [5], {"id": 7, "qty": 9}, None),
+    ("qty * 2 + 1 >= 7 AND qty % 2 = 1", [], {"id": 7, "qty": 3}, "certain"),
+    ("coalesce(discount, 0) = 0", [], {"id": 7, "discount": None}, "certain"),
+    ("length(trim(name)) > 3 AND upper(name) || '!' = 'WIDGET!'", [], {"id": 7, "name": " widget "}, None),
+    ("qty::text = '3'", [], {"id": 7, "qty": 3}, "certain"),
+    ("created < now()", [], {"id": 7, "created": "2026-01-01"}, "possible"),  # the server's clock: unknowable
+])
+def test_conditions_with_like_functions_and_arithmetic(cond, params, row, expected):
+    conflicts = analyze({}, range_vs_row(cond, params, row))["conflicts"]
+    assert (conflicts[0]["confidence"] if conflicts else None) == expected, conflicts
+
+
+def test_subqueries_are_checked_against_the_inner_tables_known_rows():
+    recall = codec.encode([codec.FakeRecord(["id", "item_id", "active"], [1, 7, True])])
+    seen = list(_io("q1", "SELECT * FROM recalls WHERE id = $1", [1], recall, 5))
+    for cond in ("id IN (SELECT item_id FROM recalls WHERE active)",
+                 "EXISTS (SELECT 1 FROM recalls r WHERE r.item_id = items.id AND r.active)"):
+        [c] = analyze({}, range_vs_row(cond, [], {"id": 7, "qty": 1}, seen))["conflicts"]
+        assert c["confidence"] == "certain" and c["resource"] == "items[id=7]", cond
+        # without a known recall row the subquery decides nothing: the conflict stays possible
+        [c] = analyze({}, range_vs_row(cond, [], {"id": 7, "qty": 1}))["conflicts"]
+        assert c["confidence"] == "possible", cond
+    # NOT EXISTS with a matching recall row excludes item 7 for certain
+    cond = "NOT EXISTS (SELECT 1 FROM recalls r WHERE r.item_id = items.id)"
+    assert analyze({}, range_vs_row(cond, [], {"id": 7, "qty": 1}, seen))["conflicts"] == []
+
+
+GUARDED = ("INSERT INTO bookings (room, day) SELECT $1, $2 "
+           "WHERE NOT EXISTS (SELECT 1 FROM bookings WHERE room = $1 AND day = $2)")
+
+
+def _guarded(path, start, end, result):
+    detail = {"sql": GUARDED, "params": [5, 10]}
+    return [(ev.IO_START, path, "pg.execute", start), (ev.IO_END, path, "pg.execute", "d", "ok", result, end, detail)]
+
+
+def test_guarded_insert_that_overlapped_in_the_database_is_check_then_act():
+    reqs = [(ev.REQUEST, 1, "r0", "POST", "/book", [], b"", 0), (ev.REQUEST, 2, "r0", "POST", "/book", [], b"", 1)]
+    s1, e1 = _guarded("q1", 10, 20, "INSERT 0 1")
+    s2, e2 = _guarded("q2", 11, 21, "INSERT 0 1")
+    a = analyze({}, reqs + [s1, s2, e1, e2])  # both statements were running at once: both checks saw no booking
+    [c] = a["conflicts"]
+    assert c["pattern"] == "check-then-act" and c["resource"] == "bookings[room=5, day=10]"
+    assert c["confidence"] == "certain"
+    # one after the other: the second one's check found the first booking and inserted nothing
+    a = analyze({}, reqs + _guarded("q1", 10, 20, "INSERT 0 1") + _guarded("q2", 30, 40, "INSERT 0 0"))
+    assert a["conflicts"] == []
+
+
+def _tx(path, op, t):
+    return [(ev.IO_START, path, op, t), (ev.IO_END, path, op, "d", "ok", None, t + 1, {})]
+
+
+def test_writes_in_a_transaction_count_when_it_commits():
+    # each request checks for room 5 on day 10, inserts it, and commits a little later
+    def events(commit_b):
+        reqs = [(ev.REQUEST, 1, "r0", "POST", "/book", [], b"", 0), (ev.REQUEST, 2, "r0", "POST", "/book", [], b"", 1)]
+        out = reqs + _tx("q1", "pg.tx.start", 5) + _tx("q2", "pg.tx.start", 6)
+        out += _io("q1", "SELECT id FROM bookings WHERE room = $1 AND day = $2", [5, 10], codec.encode([]), 10)
+        out += _io("q1", "INSERT INTO bookings (room, day) VALUES ($1, $2)", [5, 10], "INSERT 0 1", 12)
+        # B checks after A inserted, but before A committed: A's row isn't visible to it yet
+        out += _io("q2", "SELECT id FROM bookings WHERE room = $1 AND day = $2", [5, 10], codec.encode([]), 14)
+        out += _tx("q1", "pg.tx.commit", 16)
+        out += _io("q2", "INSERT INTO bookings (room, day) VALUES ($1, $2)", [5, 10], "INSERT 0 1", 18)
+        out += _tx("q2", commit_b, 20)
+        return out
+
+    [c] = analyze({}, events("pg.tx.commit"))["conflicts"]
+    assert c["pattern"] == "check-then-act" and c["resource"] == "bookings[room=5, day=10]"
+    # B rolled back: its insert never happened, so no double booking (B still read a value A was changing)
+    assert [c["pattern"] for c in analyze({}, events("pg.tx.rollback"))["conflicts"]] == ["stale-read"]

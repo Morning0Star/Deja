@@ -112,15 +112,125 @@ def _rows(where, table_names, params):
     return ([keys] if keys else None), leftover
 
 
-def _value(node, row, tables, params):
-    """(known, value) of an operand for one row: a column of this table, a literal or a parameter."""
-    if isinstance(node, exp.Paren):
-        return _value(node.this, row, tables, params)
-    if isinstance(node, exp.Column):
-        if (node.table and node.table not in tables) or node.name not in row:
+class _Scope:
+    """What a condition can see while it is evaluated for one row: that row (and, inside a subquery, the inner
+    table's candidate row first), the statement's parameters, and the rows the recording knows of other tables."""
+
+    __slots__ = ("frames", "params", "others")
+
+    def __init__(self, frames, params, others=None):
+        self.frames = frames  # [(names of a table: its name and alias, {column: value})], innermost first
+        self.params = params
+        self.others = others  # table -> [{column: value}] known rows, or None
+
+    def inner(self, names, row):
+        return _Scope([(names, row)] + self.frames, self.params, self.others)
+
+
+def _column(node, sc):
+    for names, row in sc.frames:
+        if node.table and node.table not in names:
+            continue
+        if node.name in row:
+            return True, row[node.name]
+        if node.table:  # the right table, but the recording doesn't show this column
             return False, None
-        return True, row[node.name]
-    return _param(node, params)
+    return False, None
+
+
+def _arith(node, a, b):
+    import math
+    import operator as o
+
+    if a is None or b is None:
+        return True, None  # NULL in, NULL out
+    try:
+        if isinstance(node, exp.Div):
+            if b == 0:
+                return False, None
+            if isinstance(a, int) and isinstance(b, int):
+                q = abs(a) // abs(b)  # integer division truncates toward zero in Postgres
+                return True, q if (a >= 0) == (b >= 0) else -q
+            return True, a / b
+        if isinstance(node, exp.Mod):
+            if not b:
+                return False, None
+            r = math.fmod(a, b)
+            return True, int(r) if isinstance(a, int) and isinstance(b, int) else r
+        if isinstance(node, exp.DPipe):
+            return True, f"{a}{b}"
+        op = {exp.Add: o.add, exp.Sub: o.sub, exp.Mul: o.mul}[type(node)]
+        return True, op(a, b)
+    except (TypeError, KeyError, ValueError, OverflowError):
+        return False, None
+
+
+def _cast(v, datatype):
+    kind = str(getattr(datatype, "this", "")).upper()
+    try:
+        if v is None:
+            return True, None
+        if "INT" in kind or "SERIAL" in kind:
+            return True, int(v)
+        if "TEXT" in kind or "CHAR" in kind:
+            return True, str(v)
+        if any(k in kind for k in ("FLOAT", "DOUBLE", "REAL", "DECIMAL", "NUMERIC")):
+            return True, float(v)
+        if "BOOL" in kind:
+            return True, v if isinstance(v, bool) else str(v).lower() in ("t", "true", "1", "yes", "on")
+    except (TypeError, ValueError):
+        return False, None
+    return True, v
+
+
+def _value(node, sc):
+    """(known, value) of an expression for the row in scope: a column, a literal or parameter, arithmetic, a cast,
+    or one of the common functions. Anything else (``now()``, a function Déjà doesn't know) is unknown."""
+    if isinstance(node, exp.Paren):
+        return _value(node.this, sc)
+    if isinstance(node, exp.Column):
+        return _column(node, sc)
+    if isinstance(node, exp.Cast):
+        k, v = _value(node.this, sc)
+        return _cast(v, node.args.get("to")) if k else (False, None)
+    if isinstance(node, (exp.Add, exp.Sub, exp.Mul, exp.Div, exp.Mod, exp.DPipe)):
+        (ka, a), (kb, b) = _value(node.this, sc), _value(node.expression, sc)
+        return _arith(node, a, b) if ka and kb else (False, None)
+    if isinstance(node, exp.Concat):
+        parts = [_value(x, sc) for x in node.expressions]
+        if not all(k for k, _ in parts):
+            return False, None
+        return True, "".join("" if v is None else str(v) for _, v in parts)
+    if isinstance(node, (exp.Lower, exp.Upper, exp.Length, exp.Abs, exp.Trim)):
+        k, v = _value(node.this, sc)
+        if not k or v is None:
+            return k, None
+        try:
+            if isinstance(node, exp.Lower):
+                return True, str(v).lower()
+            if isinstance(node, exp.Upper):
+                return True, str(v).upper()
+            if isinstance(node, exp.Length):
+                return True, len(str(v))
+            if isinstance(node, exp.Trim):
+                return True, str(v).strip()
+            return True, abs(v)
+        except TypeError:
+            return False, None
+    if isinstance(node, exp.Coalesce):
+        for x in [node.this] + list(node.expressions):
+            k, v = _value(x, sc)
+            if not k:
+                return False, None
+            if v is not None:
+                return True, v
+        return True, None
+    if isinstance(node, exp.Neg):
+        k, v = _value(node.this, sc)
+        if k and isinstance(v, (int, float)):
+            return True, -v
+        return (True, None) if k and v is None else (False, None)
+    return _param(node, sc.params)
 
 
 def _cmp(op, a, b):
@@ -132,54 +242,127 @@ def _cmp(op, a, b):
         return None
 
 
-def _eval(node, row, tables, params):
-    """Truth of a condition for one row: True, False, or None when the known values don't decide it."""
+def _like(value, pattern, ignore_case):
+    """SQL LIKE: ``%`` any run, ``_`` one character, backslash escapes."""
+    import re
+
+    out, i = [], 0
+    while i < len(pattern):
+        ch = pattern[i]
+        if ch == "\\" and i + 1 < len(pattern):
+            out.append(re.escape(pattern[i + 1]))
+            i += 2
+            continue
+        out.append(".*" if ch == "%" else "." if ch == "_" else re.escape(ch))
+        i += 1
+    return re.fullmatch("".join(out), str(value), re.S | (re.I if ignore_case else 0)) is not None
+
+
+_MISSING = object()
+
+
+def _subquery(node, sc, project=None):
+    """Evaluate a subquery against the rows the recording knows of its table: (rows matched, their projected values).
+
+    None when that can't be worked out (a join or a set operation inside, nothing known). Only *matches* are
+    conclusive: rows the recording doesn't know of could match too, so "none matched" decides nothing."""
+    sel = node.this if isinstance(node, exp.Subquery) else node
+    if not isinstance(sel, exp.Select) or sel.args.get("joins") or sc.others is None:
+        return None
+    src = sel.args.get("from_") or sel.args.get("from")
+    table = src.this if src is not None else None
+    if not isinstance(table, exp.Table):
+        return None
+    name = _name(table)
+    where = sel.args.get("where")
+    matched, values = 0, []
+    for row in sc.others(name) or []:
+        inner = sc.inner({name, table.alias_or_name}, row)
+        truth = True if where is None else _eval(where.this, inner)
+        if truth:
+            matched += 1
+            if project is not None:
+                k, v = _value(project, inner)
+                values.append(v if k else _MISSING)
+    return matched, values
+
+
+def _eval(node, sc):
+    """Truth of a condition for the row in scope: True, False, or None when the known values don't decide it."""
     import operator as o
 
     if isinstance(node, exp.Where):
         node = node.this
     if isinstance(node, exp.Paren):
-        return _eval(node.this, row, tables, params)
+        return _eval(node.this, sc)
     if isinstance(node, (exp.And, exp.Or)):
-        a, b = _eval(node.this, row, tables, params), _eval(node.expression, row, tables, params)
+        a, b = _eval(node.this, sc), _eval(node.expression, sc)
         decisive = isinstance(node, exp.Or)  # OR: one True decides it; AND: one False does
         if a is decisive or b is decisive:
             return decisive
         return (not decisive) if a is not None and b is not None else None
     if isinstance(node, exp.Not):
-        v = _eval(node.this, row, tables, params)
+        v = _eval(node.this, sc)
         return None if v is None else not v
     ops = {exp.EQ: o.eq, exp.NEQ: o.ne, exp.GT: o.gt, exp.GTE: o.ge, exp.LT: o.lt, exp.LTE: o.le}
     if type(node) in ops:
-        (ka, a), (kb, b) = _value(node.this, row, tables, params), _value(node.expression, row, tables, params)
+        (ka, a), (kb, b) = _value(node.this, sc), _value(node.expression, sc)
         return _cmp(ops[type(node)], a, b) if ka and kb else None
-    if isinstance(node, exp.In) and node.expressions:
-        ka, a = _value(node.this, row, tables, params)
-        vals = [_value(x, row, tables, params) for x in node.expressions]
+    if isinstance(node, (exp.Like, exp.ILike)):
+        (ka, a), (kb, b) = _value(node.this, sc), _value(node.expression, sc)
+        if not (ka and kb):
+            return None
+        return False if a is None or b is None else _like(a, str(b), isinstance(node, exp.ILike))
+    if isinstance(node, exp.RegexpLike):
+        import re
+
+        (ka, a), (kb, b) = _value(node.this, sc), _value(node.expression, sc)
+        if not (ka and kb):
+            return None
+        try:
+            return False if a is None or b is None else re.search(str(b), str(a)) is not None
+        except re.error:
+            return None
+    if isinstance(node, exp.In):
+        ka, a = _value(node.this, sc)
+        query = node.args.get("query")
+        if query is not None:  # x IN (SELECT col FROM t WHERE ...)
+            sel = query.this if isinstance(query, exp.Subquery) else query
+            if not ka or not isinstance(sel, exp.Select) or len(sel.expressions) != 1:
+                return None
+            got = _subquery(sel, sc, project=sel.expressions[0])
+            return True if got and a is not None and any(v == a for v in got[1]) else None
+        if not node.expressions:
+            return None
+        vals = [_value(x, sc) for x in node.expressions]
         if not ka or not all(k for k, _ in vals):
             return None
         return a is not None and a in [v for _, v in vals]
+    if isinstance(node, exp.Exists):  # EXISTS (SELECT ... WHERE inner.col = outer.col)
+        got = _subquery(node.this, sc)
+        return True if got and got[0] else None
     if isinstance(node, exp.Between):
-        ka, a = _value(node.this, row, tables, params)
-        (kl, lo), (kh, hi) = (_value(node.args["low"], row, tables, params),
-                              _value(node.args["high"], row, tables, params))
+        ka, a = _value(node.this, sc)
+        (kl, lo), (kh, hi) = _value(node.args["low"], sc), _value(node.args["high"], sc)
         if not (ka and kl and kh):
             return None
         lo_ok, hi_ok = _cmp(o.ge, a, lo), _cmp(o.le, a, hi)
         return None if lo_ok is None or hi_ok is None else lo_ok and hi_ok
     if isinstance(node, (exp.Column, exp.Boolean)):  # WHERE active / WHERE TRUE
-        known, v = _value(node, row, tables, params)
+        known, v = _value(node, sc)
         return bool(v) if known and v is not None else (False if known else None)
     if isinstance(node, exp.Is) and isinstance(node.expression, exp.Null):
-        ka, a = _value(node.this, row, tables, params)
+        ka, a = _value(node.this, sc)
         return (a is None) if ka else None
     return None
 
 
 def _matcher(where, tables, params):
+    """``match(row, others=None)``: the condition for one row of the table (see :func:`_eval`). ``others(table)``
+    gives the known rows of another table, for subqueries."""
     if where is None:
         return None
-    return lambda row: _eval(where, row, tables, params)
+    return lambda row, others=None: _eval(where, _Scope([(tables, row)], params, others))
 
 
 def _name(t: "exp.Table") -> str:
@@ -263,6 +446,16 @@ def touches(sql: str, params: list):
             key_cols = [k for k in key_cols if k in writes] or ([cols[0]] if cols else [])
             if key_cols and all(not isinstance(writes[k], Expr) for k in key_cols):
                 rows = [{k: writes[k] for k in key_cols}]
+        elif isinstance(source, exp.Select) and not (source.args.get("from_") or source.args.get("from")):
+            for i, v in enumerate(source.expressions):  # SELECT $1, $2 WHERE ...: a row of values, maybe guarded
+                v = v.this if isinstance(v, exp.Alias) else v
+                ok, val = _param(v, params)
+                writes[cols[i] if i < len(cols) else f"col{i + 1}"] = val if ok else Expr(_text(v, params))
+            if cols and all(not isinstance(writes.get(c), Expr) for c in cols[:1]):
+                rows = [{cols[0]: writes[cols[0]]}]
+            reads(source)
+            for t in out:
+                t["guard"] = True  # read inside the statement that decides whether it inserts
         elif source is not None:
             reads(source)
         add(table, "write", rows, None, writes=writes or None,

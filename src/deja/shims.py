@@ -16,6 +16,7 @@ import time
 import uuid
 
 from .adapters import _inside as _inside_io
+from .threads import _thread
 
 _get_loop = asyncio._get_running_loop  # returns None instead of raising when no loop runs in this thread
 _current_task = asyncio.current_task
@@ -55,13 +56,19 @@ def _wrap(module, name, fn):
         if _inside_io.get():  # a library's own clock read inside a recorded I/O call: not part of the app's story
             return value
         loop = _get_loop()
+        rec = None
         if loop is not None:
             rec = getattr(loop, "deja", None)
-            if rec is not None and _current_task(loop) is not None:
-                encoded = _encode(value)
-                got = rec.read(source, encoded)  # recording returns `encoded`; replay may return the recorded value
-                if got is not encoded:
-                    value = _decode(source, got)
+            if rec is not None and _current_task(loop) is None:
+                rec = None
+        else:
+            t = _thread.get()  # a worker-thread call made from request scope
+            rec = t[0] if t is not None else None
+        if rec is not None:
+            encoded = _encode(value)
+            got = rec.read(source, encoded)  # recording returns `encoded`; replay may return the recorded value
+            if got is not encoded:
+                value = _decode(source, got)
         return value
 
     shim.__wrapped__ = fn

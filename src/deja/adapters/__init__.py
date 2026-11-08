@@ -20,7 +20,7 @@ from .. import codec
 _get_loop = asyncio._get_running_loop
 _inside = contextvars.ContextVar("deja_inside_io", default=False)  # suppress nested adapter calls
 
-KNOWN = ("asyncpg", "httpx", "redis")
+KNOWN = ("asyncpg", "httpx", "redis", "anyio")
 EXECUTOR_OP = "executor"  # loop.run_in_executor, recorded by the loop itself
 OPTIONAL_OPS = {"pg.prepare"}  # may be skipped by a client-side cache (SQLAlchemy's statement cache); see replay
 OUTSIDE_LIMIT = 500  # distinct out-of-request calls (startup queries) whose first result is kept for replay

@@ -13,6 +13,7 @@ import time
 
 from . import events as ev
 from .ids import TaskRegistry
+from .threads import _thread
 
 _now = time.perf_counter_ns  # bound before the shims patch anything; time.perf_counter_ns is never shimmed
 
@@ -70,6 +71,7 @@ class Recorder:
         self.loop = None
         self.catalog: dict = {}  # adapter metadata replay needs (statement columns, startup call results)
         self._listener_ids = itertools.count()  # LISTEN callbacks, numbered in registration order
+        self._thread_n: dict[str, int] = {}  # task path -> worker-thread calls made so far (deja.threads)
 
     # ------------------------------------------------------------------ events
     def _on_task_new(self, path, parent_path, task):
@@ -81,8 +83,23 @@ class Recorder:
         self.buffer.append((ev.TASK_GONE, task_id))
 
     def current_path(self):
-        task = asyncio.current_task()
+        t = _thread.get()
+        if t is not None and t[0] is self:  # inside a worker-thread call made from request scope
+            return t[1]
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:  # another thread, no event loop
+            return None
         return self.ids.path(task) if task is not None else None
+
+    def thread_path(self, path: str) -> str:
+        """Path of the next worker-thread call made by task ``path`` (``q3.t0``, ``q3.t1``...)."""
+        n = self._thread_n.get(path, 0)
+        self._thread_n[path] = n + 1
+        return f"{path}.t{n}"
+
+    def thread_end(self, path: str):
+        """A worker-thread call returned (called in the thread). Replay uses it to release the event loop."""
 
     def read(self, source: str, value):
         """Record a non-deterministic value read inside a task (called by the shims). Returns ``value`` unchanged;
@@ -142,6 +159,9 @@ class Recorder:
     def request_end(self, rid: int, status: int, body: bytes = b""):
         self.buffer.append((ev.RESPONSE, rid, status, body[:65536], _now()))
         self._active.pop(rid, None)
+        root = f"q{rid}"
+        for k in [k for k in self._thread_n if k == root or k.startswith(root + ".")]:
+            del self._thread_n[k]
         task, outer = self._outer.pop(rid, (None, None))
         if task is not None and outer is not None:
             self.ids.rebind(task, outer)  # leave request scope

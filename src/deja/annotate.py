@@ -11,12 +11,16 @@ Both are no-ops outside a recording loop. Neither is needed for record or replay
 import asyncio
 
 from .recorder import LABELS
+from .threads import _thread
 
 
 def _recorder():
     """The recorder when the current code runs inside a request being recorded, else None."""
     loop = asyncio._get_running_loop()
     rec = getattr(loop, "deja", None) if loop is not None else None
+    if rec is None:
+        t = _thread.get()  # a worker-thread call made from request scope
+        rec = t[0] if t is not None else None
     if rec is None or getattr(rec, "replaying", False):
         return None
     path = rec.current_path()
@@ -29,6 +33,17 @@ def touch(resource: str, kind: str = "read", value=None) -> None:
     rec = _recorder()
     if rec is not None:
         rec.touch(resource, kind, value)
+    else:
+        _gate()
+
+
+def _gate() -> bool:
+    """During replay, in a worker thread: wait until the schedule reaches this access (see deja.threads)."""
+    t = _thread.get()
+    if t is not None and getattr(t[0], "replaying", False):
+        t[0].thread_gate(t[1])
+        return True
+    return False
 
 
 def labels(mapping: dict) -> None:
