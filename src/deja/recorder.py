@@ -106,6 +106,9 @@ class Recorder:
     def thread_end(self, path: str):
         """A worker-thread call returned (called in the thread). Replay uses it to release the event loop."""
 
+    def thread_park(self, path: str, parked: bool):
+        """A worker thread starts / stops waiting for the event loop (replay only)."""
+
     def read(self, source: str, value):
         """Record a non-deterministic value read inside a task (called by the shims). Returns ``value`` unchanged;
         the replay recorder overrides this to hand back recorded values."""

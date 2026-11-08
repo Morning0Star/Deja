@@ -14,8 +14,9 @@ Unlike ``loop.run_in_executor`` (whose result is recorded and handed back withou
   two threads racing on the same state race the same way again.
 
 The granularity is one access to tracked state: work in between (computation, other memory) runs freely, and an
-access that happened in the middle of one loop step replays just after it. Code in a thread that waits for the
-event loop (``anyio.from_thread.run``) between two such accesses is let go after the replay deadline.
+access that happened in the middle of one loop step replays just after it. A thread that calls back into the event
+loop (``anyio.from_thread.run`` / ``run_sync``) is *parked* while it waits, so the loop keeps going instead of
+waiting for the thread.
 """
 
 import asyncio
@@ -25,6 +26,7 @@ from . import adapters
 
 _thread: contextvars.ContextVar = contextvars.ContextVar("deja_thread", default=None)  # (recorder, path)
 _original = None
+_from_thread: dict = {}  # anyio.from_thread functions replaced while installed
 
 
 def current():
@@ -59,21 +61,46 @@ def _wrap(func):
     return run_sync_in_worker_thread
 
 
+def _parking(fn):
+    """``anyio.from_thread.run``: while the thread waits for the event loop, replay must not wait for the thread."""
+
+    def call(*args, **kwargs):
+        t = _thread.get()
+        if t is None or not getattr(t[0], "replaying", False):
+            return fn(*args, **kwargs)
+        t[0].thread_park(t[1], True)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            t[0].thread_park(t[1], False)
+
+    call.__wrapped__ = fn
+    return call
+
+
 def install():
     global _original
     try:
+        import anyio.from_thread
         from anyio._backends._asyncio import AsyncIOBackend
     except ImportError:  # anyio not installed
         return
     if _original is None:
         _original = AsyncIOBackend.__dict__["run_sync_in_worker_thread"]
         AsyncIOBackend.run_sync_in_worker_thread = classmethod(_wrap(_original.__func__))
+        for name in ("run", "run_sync"):
+            _from_thread[name] = getattr(anyio.from_thread, name)
+            setattr(anyio.from_thread, name, _parking(_from_thread[name]))
 
 
 def uninstall():
     global _original
     if _original is not None:
+        import anyio.from_thread
         from anyio._backends._asyncio import AsyncIOBackend
 
         AsyncIOBackend.run_sync_in_worker_thread = _original
         _original = None
+        for name, fn in _from_thread.items():
+            setattr(anyio.from_thread, name, fn)
+        _from_thread.clear()

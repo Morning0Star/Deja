@@ -91,13 +91,9 @@ class DejaMiddleware:
             return await self.app(scope, receive, send)
         if not self._scanned:  # once, on the first request: startup has built the app's state
             self._scanned = True
-            from .source import fingerprint
+            from .autotrack import prepare
 
-            rec.catalog["source"] = fingerprint(scope.get("app") or self.app)  # replay warns if the code changed
-            if self.track:
-                from .autotrack import auto_track
-
-                self.tracked = auto_track(scope.get("app"))
+            self.tracked, rec.catalog["source"] = prepare(scope.get("app") or self.app, self.track)
         if scope["type"] == "websocket":
             return await self._websocket(rec, scope, receive, send)
 

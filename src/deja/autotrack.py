@@ -419,10 +419,30 @@ def _monitor(reach):
 
 
 # ---------------------------------------------------------------------- entry point
-def auto_track(app) -> list:
-    """Track the shared in-memory state reachable from ``app``'s routes. Returns the names now tracked."""
+def prepare(app, track=True) -> tuple:
+    """What the middleware (on the first request) and replay (after startup) do once per app: fingerprint the
+    source the routes reach, point clock / random / date names in those modules at the recording wrappers
+    (:func:`deja.shims.rebind`), and track shared state. Returns ``(tracked names, source fingerprint)``."""
+    from .shims import rebind
+    from .source import fingerprint
+
     try:
         reach = _Reach(app)
+    except Exception:
+        log.warning("deja: could not follow the app's routes", exc_info=True)
+        return [], {}
+    source = fingerprint(app, reach)
+    try:
+        rebind(reach.modules.values())
+    except Exception:
+        log.warning("deja: could not rebind clock names in the app", exc_info=True)
+    return (auto_track(app, reach) if track else []), source
+
+
+def auto_track(app, reach=None) -> list:
+    """Track the shared in-memory state reachable from ``app``'s routes. Returns the names now tracked."""
+    try:
+        reach = reach or _Reach(app)
         objs, names, owners, apps = _candidates(app, reach)
         done = _swap(objs, names, owners)
         done += _track_objects(apps, reach.stored_attrs)

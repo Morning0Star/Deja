@@ -119,3 +119,30 @@ def test_exception_saves_a_recording(tmp_path):
 def test_flag_saves_a_recording(tmp_path):
     (r,), rec, dumps = drive(tmp_path, ("GET", "/flagged", None))
     assert r.status_code == 200 and dumps and dumps[0][1] == "flag: invariant broken"
+
+
+def test_clock_names_bound_before_recording_and_datetime_replay(tmp_path):
+    import os
+    import time as _time
+
+    import httpx
+
+    import clock_app
+    from deja.replay import replay
+
+    out = {}
+
+    async def main():
+        app = clock_app.make_app()
+        app.add_middleware(deja.DejaMiddleware, directory=str(tmp_path))
+        rec = asyncio.get_running_loop().deja
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://app") as c:
+            m = rec.mark("t")
+            out["r"] = (await c.get("/stamp")).json()
+            out["path"] = rec.dump(os.path.join(str(tmp_path), "clock.deja"), since=m)
+
+    asyncio.run(main(), loop_factory=deja.recording_loop)
+    assert out["r"]["real"] is True, "the stand-ins give real datetimes"
+    _time.sleep(0.05)
+    r = replay(out["path"], clock_app.make_app, deadline_s=5)
+    assert r.followed and r.same_responses, r.summary()  # every clock value came back from the recording

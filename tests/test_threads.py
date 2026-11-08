@@ -48,11 +48,11 @@ def make_app():
     return app
 
 
-def record(calls, path):
+def record(calls, path, factory=None):
     out = {}
 
     async def main():
-        app = make_app()
+        app = (factory or make_app)()
         app.add_middleware(deja.DejaMiddleware, directory=os.path.dirname(path))
         rec = asyncio.get_running_loop().deja
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://app") as client:
@@ -165,3 +165,34 @@ def test_asyncio_to_thread_reruns_only_calls_that_changed_state(tmp_path):
     r = replay(path, lambda: to_thread_app("b", calls), deadline_s=5)
     assert r.followed and r.same_responses, r.summary()
     assert sorted(calls) == ["a", "b"], "the I/O-only helper must not run again during replay"
+
+
+def callback_app():
+    """A plain def endpoint that calls back into the event loop between two accesses to shared state."""
+    import anyio.from_thread
+
+    app = FastAPI()
+    stock = {"widget": 1}
+
+    async def audit(name):
+        await asyncio.sleep(0.01)
+        return name
+
+    @app.post("/buy/{name}")
+    def buy(name: str):
+        n = stock["widget"]
+        anyio.from_thread.run(audit, name)  # waits for the event loop
+        if n > 0:
+            stock["widget"] = n - 1
+            return {"ok": True}
+        return {"ok": False}
+
+    return app
+
+
+def test_thread_waiting_for_the_loop_does_not_stall_replay(tmp_path):
+    path, responses = record([("POST", "/buy/a"), ("POST", "/buy/b")], str(tmp_path / "cb.deja"), callback_app)
+    t0 = time.monotonic()
+    r = replay(path, callback_app, deadline_s=5)
+    assert r.followed and r.same_responses, r.summary()
+    assert time.monotonic() - t0 < 3, "replay waited for the deadline"

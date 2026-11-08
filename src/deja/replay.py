@@ -152,6 +152,7 @@ class ReplayRecorder(Recorder):
         self._arrived: collections.Counter = collections.Counter()
         self._granted: collections.Counter = collections.Counter()
         self._finished: set = set()
+        self._parked: set = set()  # threads waiting for the event loop (anyio.from_thread)
         self._released = False
         self.gate_timeout = 10.0
 
@@ -177,24 +178,33 @@ class ReplayRecorder(Recorder):
             self._finished.add(path)
             self._gate.notify_all()
 
-    def thread_turn(self, path, timeout) -> bool:
+    def thread_park(self, path, parked):
+        with self._gate:
+            (self._parked.add if parked else self._parked.discard)(path)
+            self._gate.notify_all()
+
+    def thread_turn(self, path, timeout):
         """On the loop: let ``path`` through its next access, and wait until it has done it (it parks at its next
-        access or returns). False if the thread didn't get there in time."""
+        access or returns). False if the thread didn't get there in time; None if, before getting there, it is
+        waiting for the event loop (the loop must run, then try again)."""
         with self._gate:
             k = self._granted[path]
             end = _real_monotonic() + timeout
             while self._arrived[path] <= k and path not in self._finished:  # not at this access yet
+                if path in self._parked:
+                    return None
                 left = end - _real_monotonic()
                 if left <= 0:
                     return False
-                self._gate.wait(left)
+                self._gate.wait(min(left, 0.05))
             self._granted[path] = k + 1
             self._gate.notify_all()
-            while self._arrived[path] <= k + 1 and path not in self._finished:  # doing it, then on to the next
+            while (self._arrived[path] <= k + 1 and path not in self._finished
+                   and path not in self._parked):  # doing it, then on to the next (or waiting for the loop)
                 left = end - _real_monotonic()
                 if left <= 0:
                     return False
-                self._gate.wait(left)
+                self._gate.wait(min(left, 0.05))
             return True
 
     def release_threads(self):
@@ -447,8 +457,18 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
 
             kind, val = sched.entries[self.pos]
             if kind == "thread":
+                turn = self.deja.thread_turn(val, self.deadline_s)
+                if turn is None:  # the thread is waiting for the loop: run the loop (its timers too), then try again
+                    self._poll(0)
+                    if not ready and self._scheduled:
+                        self.vt = max(self.vt, self._scheduled[0]._when)
+                        continue
+                    if not ready:
+                        self._poll(0.001)
+                    self._check_deadline()
+                    return
                 self.pos += 1
-                if not self.deja.thread_turn(val, self.deadline_s):
+                if not turn:
                     self.deja.io_misses.append(f"{val}: worker thread did not reach its recorded access")
                 self.trace.append(val)
                 self._progress()
@@ -674,14 +694,14 @@ def replay(recording, app_factory, deadline_s: float = 10.0, track: bool = True)
 
     async def drive():
         await harness.startup()
-        from .source import changed, fingerprint
+        from .autotrack import prepare
+        from .source import changed
 
+        # as the middleware does on the first request: worker threads are ordered by tracked accesses, and the
+        # app's clock names must point at the recording wrappers to get the recorded values back
+        _, current = prepare(app, track)
         recorded = (schedule.header.get("catalog") or {}).get("source") or {}
-        loop.code_changed = changed(recorded, fingerprint(app)) if recorded else []
-        if track:  # as the middleware does on the first request: worker threads are ordered by tracked accesses
-            from .autotrack import auto_track
-
-            auto_track(app)
+        loop.code_changed = changed(recorded, current) if recorded else []
         loop.armed = True
         await loop.done.wait()
         # connections still open at the end of the recording stay open: don't wait for those

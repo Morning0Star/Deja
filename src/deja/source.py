@@ -11,12 +11,12 @@ import hashlib
 MAX_FILES = 300
 
 
-def fingerprint(app) -> dict:
+def fingerprint(app, reach=None) -> dict:
     """``{module name: short sha1 of its source file}`` for the app's modules the routes reach."""
     from .autotrack import _Reach, _app_globals
 
     try:
-        reach = _Reach(app)
+        reach = reach or _Reach(app)
     except Exception:
         return {}
     out = {}
