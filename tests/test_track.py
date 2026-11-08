@@ -1,7 +1,8 @@
 import pytest
 
 import deja
-from deja import codec, events as ev
+from deja import codec
+from deja import events as ev
 from deja.loop import recording_loop
 from deja.track import TrackedDict
 

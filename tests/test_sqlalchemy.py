@@ -7,14 +7,13 @@ import os
 import httpx
 import pytest
 from fastapi import FastAPI
+from test_adapters import DEAD_PORT_DSN, PG_DSN, reachable
 
 import deja
 from deja import recording_loop
 from deja.analysis import analyze
 from deja.fileformat import read
 from deja.replay import replay
-
-from test_adapters import DEAD_PORT_DSN, PG_DSN, reachable
 
 sa = pytest.importorskip("sqlalchemy")
 from sqlalchemy import Integer, select  # noqa: E402

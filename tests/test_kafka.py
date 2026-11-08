@@ -10,9 +10,9 @@ from fastapi import FastAPI
 
 pytest.importorskip("aiokafka")
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer  # noqa: E402
-
 from test_adapters import reachable  # noqa: E402
 from test_streams import record_concurrently  # noqa: E402
+
 from deja.replay import replay  # noqa: E402
 
 pytestmark = pytest.mark.skipif(not reachable("127.0.0.1", 59092), reason="test Kafka not running")

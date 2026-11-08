@@ -8,9 +8,9 @@ from fastapi import FastAPI
 
 pymongo = pytest.importorskip("pymongo")
 from pymongo import AsyncMongoClient  # noqa: E402
-
 from test_adapters import reachable  # noqa: E402
 from test_streams import record_concurrently  # noqa: E402
+
 from deja.analysis import analyze  # noqa: E402
 from deja.fileformat import read  # noqa: E402
 from deja.replay import replay  # noqa: E402

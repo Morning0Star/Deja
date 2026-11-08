@@ -3,10 +3,10 @@
 import asyncio
 import os
 
+import autotrack_app
 import httpx
 import pytest
 
-import autotrack_app
 import deja
 from deja import recording_loop
 from deja.analysis import analyze

@@ -10,9 +10,8 @@ import re
 from collections import defaultdict
 from urllib.parse import urlsplit
 
-from . import codec
+from . import codec, sqltouch
 from . import events as ev
-from . import sqltouch
 from .sqltouch import Expr as _Expr
 from .threads import is_thread_path
 

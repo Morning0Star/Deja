@@ -3,8 +3,6 @@ import glob
 import json
 import os
 
-import pytest
-
 from deja import recording_loop
 from deja.replay import Schedule, replay
 from gallery import stress, wallet
@@ -73,7 +71,9 @@ def test_replay_notes_when_the_apps_code_changed(tmp_path):
 
         async def main():
             import asyncio
+
             import httpx
+
             import deja
 
             app = shop_app_v.make_app()
@@ -85,6 +85,7 @@ def test_replay_notes_when_the_apps_code_changed(tmp_path):
                 out["path"] = rec.dump(str(tmp_path / "v.deja"), since=m)
 
         import asyncio
+
         from deja import recording_loop
 
         asyncio.run(main(), loop_factory=recording_loop)

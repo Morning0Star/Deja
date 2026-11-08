@@ -5,10 +5,10 @@ import os
 import subprocess
 import sys
 
+import fixable_app
 import httpx
 
 import deja
-import fixable_app
 from deja import recording_loop
 from deja.verify import diff, export_test, verify
 

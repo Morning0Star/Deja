@@ -5,8 +5,9 @@ import os
 
 import pytest
 
-grpc = pytest.importorskip("grpc")
-import grpc.aio  # noqa: E402
+pytest.importorskip("grpc")
+import grpc  # noqa: E402
+import grpc.aio  # noqa: E402,F401
 import httpx  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 

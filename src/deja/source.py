@@ -13,7 +13,7 @@ MAX_FILES = 300
 
 def fingerprint(app, reach=None) -> dict:
     """``{module name: short sha1 of its source file}`` for the app's modules the routes reach."""
-    from .autotrack import _Reach, _app_globals
+    from .autotrack import _app_globals, _Reach
 
     try:
         reach = reach or _Reach(app)

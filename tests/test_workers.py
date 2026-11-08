@@ -13,13 +13,14 @@ from fastapi import FastAPI
 
 asyncpg = pytest.importorskip("asyncpg")
 
+from test_adapters import DEAD_PORT_DSN, PG_DSN, reachable  # noqa: E402
+
 import deja  # noqa: E402
 from deja import recording_loop  # noqa: E402
 from deja.analysis import analyze  # noqa: E402
 from deja.fileformat import read  # noqa: E402
 from deja.group import merge  # noqa: E402
 from deja.replay import replay  # noqa: E402
-from test_adapters import DEAD_PORT_DSN, PG_DSN, reachable  # noqa: E402
 
 pytestmark = pytest.mark.skipif(not reachable("127.0.0.1", int(PG_DSN.rsplit(":", 1)[1].split("/")[0])),
                                 reason="test Postgres not running")

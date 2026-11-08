@@ -7,9 +7,9 @@ import contextlib
 import asyncpg
 import pytest
 from fastapi import FastAPI
-
 from test_adapters import DEAD_PORT_DSN, PG_DSN, reachable
 from test_streams import record_concurrently
+
 from deja import sqltouch
 from deja.analysis import analyze
 from deja.fileformat import read

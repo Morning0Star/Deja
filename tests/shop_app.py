@@ -1,8 +1,7 @@
 """An app whose shared state is all in a helper module and no deja.track calls (used by test_autotrack)."""
 
-from fastapi import FastAPI
-
 import shop_services as services
+from fastapi import FastAPI
 
 
 def make_app():

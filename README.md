@@ -7,7 +7,7 @@ call returned, what the clock and random number generator said) and replays it o
 event loop. The bug that only happened when two requests overlapped in production happens again, every time, with
 no database or network needed.
 
-![A Déjà report: two purchases both read balance 100 before either writes](docs/img/report.png)
+![A Déjà report: two purchases both read balance 100 before either writes](https://raw.githubusercontent.com/Morning0Star/Deja/main/docs/img/report.png)
 
 > Status: working end to end for ASGI apps (FastAPI, Starlette, Litestar, Quart, Django), aiohttp servers and queue
 > workers, on CPython 3.12 to 3.15 and PyPy 3.12, tested on Linux, Windows and macOS. Not production-hardened yet;
@@ -16,7 +16,18 @@ no database or network needed.
 > Feasibility spikes: [spikes/RESULTS.md](spikes/RESULTS.md) · Benchmarks: [benchmarks/RESULTS.md](benchmarks/RESULTS.md) ·
 > Race gallery: [gallery/README.md](gallery/README.md)
 
+## Install
+
+```bash
+pip install deja-replay
+```
+
+Python 3.12 or newer. The import name is `deja` and the command is `deja`. Adapters switch on for the libraries you
+have installed; nothing else is needed.
+
 ## Try it
+
+From a clone of this repository, with the race gallery (small FastAPI apps with real races):
 
 ```bash
 pip install -e ".[dev,gallery]"
@@ -103,7 +114,7 @@ of pretending it matched.
 
 ## Results
 
-Acceptance run (`python -m gallery.acceptance --recordings 5 --replays 100`), CPython 3.12 and 3.14:
+Acceptance run (`python -m gallery.acceptance --recordings 5 --replays 100`), CPython 3.12 and 3.14, November 2026:
 
 | App | Bug in plain runs | Failing recordings replayed | Passing recordings replayed |
 |---|---|---|---|
@@ -113,7 +124,8 @@ Acceptance run (`python -m gallery.acceptance --recordings 5 --replays 100`), CP
 
 The same holds with the apps on Postgres, including with the database container stopped before replaying.
 
-Overhead (FastAPI + Postgres + an HTTP call per order, k6 at 100 to 400 req/s, GitHub Actions Linux, 2 vCPU):
+Overhead, measured in November 2026 (FastAPI + Postgres + an HTTP call per order, k6 at 100 to 400 req/s, GitHub
+Actions Linux, 2 vCPU):
 throughput unchanged, no failed requests, about +12% server CPU, +1 to 3 ms at p99, about 0.1 KB of recording per
 request. Details and method: [benchmarks/RESULTS.md](benchmarks/RESULTS.md).
 
@@ -152,3 +164,17 @@ What Déjà can't decide, it says so ("possible conflict") rather than guess. Th
 
 CPython 3.12, 3.13, 3.14 or 3.15, or PyPy 3.12. sqlglot is the only dependency; adapters load for the libraries you
 have. The import name is `deja`; the PyPI distribution will be `deja-replay` (`deja` is taken on PyPI).
+
+## Privacy
+
+Recordings hold what the app saw: request bodies, SQL parameters, rows, API responses. Treat them like database
+dumps and read [SECURITY.md](SECURITY.md) before sharing one.
+
+## Contributing
+
+Bug reports with a recording (private data removed) are the most useful; see [CONTRIBUTING.md](CONTRIBUTING.md) for
+setup and tests, and [CHANGELOG.md](CHANGELOG.md) for what changed.
+
+## License
+
+To be decided before the first release.

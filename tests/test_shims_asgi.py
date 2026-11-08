@@ -5,10 +5,10 @@ import time
 import uuid
 
 import httpx
-import pytest
 
 import deja
-from deja import events as ev, fileformat, shims
+from deja import events as ev
+from deja import fileformat, shims
 from deja.loop import recording_loop
 
 
@@ -125,9 +125,9 @@ def test_clock_names_bound_before_recording_and_datetime_replay(tmp_path):
     import os
     import time as _time
 
+    import clock_app
     import httpx
 
-    import clock_app
     from deja.replay import replay
 
     out = {}

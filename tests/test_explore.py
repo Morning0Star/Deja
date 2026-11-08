@@ -4,10 +4,10 @@ which both buy the last widget."""
 import asyncio
 import os
 
+import fixable_app
 import httpx
 
 import deja
-import fixable_app
 from deja import recording_loop
 from deja.explore import explore, summary
 

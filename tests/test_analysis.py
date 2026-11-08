@@ -4,7 +4,8 @@ import os
 
 import pytest
 
-from deja import events as ev, recording_loop
+from deja import events as ev
+from deja import recording_loop
 from deja.analysis import analyze, sql_touches
 from deja.fileformat import read
 

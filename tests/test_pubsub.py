@@ -7,9 +7,9 @@ import contextlib
 import pytest
 import redis.asyncio as aioredis
 from fastapi import FastAPI
-
 from test_adapters import reachable
 from test_streams import record_concurrently
+
 from deja.replay import replay
 
 pytestmark = pytest.mark.skipif(not reachable("127.0.0.1", 56379), reason="test Redis not running")

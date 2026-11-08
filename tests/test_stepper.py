@@ -1,9 +1,10 @@
 """deja step: pause before a recorded step and inspect the request that's about to run."""
 
 import fixable_app
+from test_verify import record
+
 from deja.replay import replay
 from deja.stepper import Stepper
-from test_verify import record
 
 
 def test_step_to_a_point_and_inspect(tmp_path):

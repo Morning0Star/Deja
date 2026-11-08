@@ -1,7 +1,8 @@
 """Clock and date reads bound the ways apps bind them before Déjà starts (used by test_shims_asgi)."""
 
 import datetime
-from datetime import date, datetime as dt
+from datetime import date
+from datetime import datetime as dt
 from time import time
 
 from fastapi import FastAPI

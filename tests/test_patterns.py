@@ -8,7 +8,8 @@ import pytest
 from fastapi import FastAPI
 
 import deja
-from deja import codec, events as ev, recording_loop
+from deja import events as ev
+from deja import recording_loop
 from deja.analysis import analyze, call_touches
 from deja.fileformat import read
 from deja.replay import replay

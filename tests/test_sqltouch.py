@@ -1,6 +1,7 @@
 import pytest
 
-from deja import codec, events as ev, sqltouch
+from deja import codec, sqltouch
+from deja import events as ev
 from deja.analysis import analyze, sql_touches
 
 pytestmark = pytest.mark.skipif(not sqltouch.available(), reason="sqlglot not installed")

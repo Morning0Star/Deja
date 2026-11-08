@@ -1,11 +1,8 @@
 import asyncio
-import sys
 import warnings
 
-import pytest
-
-import deja
-from deja import _compat, events as ev, fileformat
+from deja import _compat, fileformat
+from deja import events as ev
 from deja.loop import recording_loop
 from deja.recorder import Recorder
 

@@ -55,7 +55,6 @@ def django_app():
                            MIDDLEWARE=[], INSTALLED_APPS=[])
         django.setup()
     sys.modules.pop("django_shop", None)
-    import django_shop  # a fresh stock for each app, like the factories above
 
     from django.core.asgi import get_asgi_application
     from django.urls import clear_url_caches

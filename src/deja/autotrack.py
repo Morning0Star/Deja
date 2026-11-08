@@ -30,10 +30,10 @@ only those. Use it for objects whose class must not be swapped (code that checks
 are saved in the recording and replay applies the same ones.
 """
 
-import abc
 import dis
 import fnmatch
 import gc
+import importlib
 import inspect
 import logging
 import os
@@ -42,10 +42,9 @@ import sysconfig
 import types
 
 from . import annotate
-import importlib
+from .track import COPIES, TRACKED, copy_of, track_object
 
 _track = importlib.import_module("deja.track")  # (`from . import track` is the deja.track function)
-from .track import COPIES, TRACKED, copy_of, track_object
 
 log = logging.getLogger("deja")
 PLAIN = COPIES  # exact types that get a tracked copy
@@ -511,10 +510,10 @@ def prepare(app, track=True, rules=ALL) -> tuple:
     """What the middleware (on the first request) and replay (after startup) do once per app: fingerprint the
     source the routes reach, point clock / random / date names in those modules at the recording wrappers
     (:func:`deja.shims.rebind`), and track shared state. Returns ``(tracked names, source fingerprint)``."""
+    import time
+
     from .shims import rebind
     from .source import fingerprint
-
-    import time
 
     t0 = time.perf_counter()
     try:

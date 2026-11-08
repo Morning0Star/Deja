@@ -9,13 +9,13 @@ from fastapi import FastAPI
 psycopg = pytest.importorskip("psycopg")
 psycopg_pool = pytest.importorskip("psycopg_pool")
 
-from test_adapters import PG_DSN, reachable  # noqa: E402
 import httpx  # noqa: E402
+from test_adapters import PG_DSN, reachable  # noqa: E402
 
 import deja  # noqa: E402
-from deja.loop import RecordingSelectorLoop  # noqa: E402
 from deja.analysis import analyze  # noqa: E402
 from deja.fileformat import read  # noqa: E402
+from deja.loop import RecordingSelectorLoop  # noqa: E402
 from deja.replay import replay  # noqa: E402
 
 pytestmark = pytest.mark.skipif(not reachable("127.0.0.1", int(PG_DSN.rsplit(":", 1)[1].split("/")[0])),

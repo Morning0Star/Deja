@@ -10,6 +10,7 @@ from fastapi import FastAPI
 aiosqlite = pytest.importorskip("aiosqlite")
 
 from test_streams import record_concurrently  # noqa: E402
+
 from deja.analysis import analyze  # noqa: E402
 from deja.fileformat import read  # noqa: E402
 from deja.replay import replay  # noqa: E402
@@ -17,8 +18,6 @@ from deja.replay import replay  # noqa: E402
 
 def counter_app(path):
     def factory():
-        state = {}
-
         @contextlib.asynccontextmanager
         async def lifespan(app):
             async with aiosqlite.connect(path) as db:

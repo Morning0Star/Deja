@@ -8,13 +8,12 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
+from test_adapters import DEAD_PORT_DSN, PG_DSN, reachable
 
 import deja
 from deja import recording_loop
 from deja.fileformat import read
 from deja.replay import replay
-
-from test_adapters import DEAD_PORT_DSN, PG_DSN, reachable
 
 
 def record_concurrently(factory, calls, path):
