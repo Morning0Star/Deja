@@ -452,6 +452,9 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
         """Hand a recorded notification to the listener the replayed app registered in the same order."""
         import inspect
 
+        if pid == "kafka":  # a message for a background consumer (adapters.aiokafka decodes it)
+            self.deja.pubsub_push(lid, payload)
+            return
         if pid == "redis":  # a pub/sub message for a background listener (adapters.redis)
             from . import codec
 

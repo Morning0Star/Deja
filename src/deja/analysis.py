@@ -253,6 +253,8 @@ def call_touches(io: dict, kinds: dict | None = None) -> list[dict]:
         return out
     if op.startswith("mongo.") and d.get("collection"):
         return _mongo_touches(d, io.get("raw"))
+    if op == "kafka.send" and d.get("topic"):
+        return [{"resource": f"kafka {d['topic']}", "kind": "write", "writes": {"(message)": True}}]
     if op == "aws.call" and d.get("operation"):
         return _aws_touches(d)
     if op in ("grpc.call", "grpc.stream") and d.get("method"):

@@ -60,6 +60,8 @@ def _detail(op, key):
             from .codec import decode
 
             return {"collection": key[1], "method": key[2], "args": decode(key[3])}
+        if op == "kafka.send" and isinstance(key, tuple) and len(key) == 4:
+            return {"topic": key[1]}
         if op == "aws.call" and isinstance(key, tuple) and len(key) == 4:
             from .codec import decode
 
