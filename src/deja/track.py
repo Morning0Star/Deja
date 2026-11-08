@@ -80,8 +80,12 @@ class _Tracked:
         """One access to the whole container: a read snapshots the keys (only when recording)."""
         if not self._on() or annotate._recorder() is None:
             return
-        n = self._deja_len()
-        v = (list(self._keys()) if n <= SNAPSHOT_LIMIT else n) if kind == "read" else None
+        _local.busy = True  # taking the snapshot may call our own methods again (PyPy's views call __len__)
+        try:
+            n = self._deja_len()
+            v = (list(self._keys()) if n <= SNAPSHOT_LIMIT else n) if kind == "read" else None
+        finally:
+            _local.busy = False
         touch(_res(self._deja_name, self._deja_key, "*"), kind, v)
 
 

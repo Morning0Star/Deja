@@ -46,3 +46,19 @@ jobs:
         env:
           DEJA_PG_DSN: postgresql://deja:deja@127.0.0.1:55432/deja
         run: python -m gallery.acceptance --recordings 2 --replays 20
+
+  pypy:
+    name: ubuntu-latest / PyPy 3.12
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "pypy3.12"
+      - name: Install
+        run: python -m pip install -e ".[dev]" fastapi httpx uvicorn
+      - name: Tests (no database adapters)
+        run: >
+          python -m pytest -q --ignore=tests/test_sql_live.py --ignore=tests/test_sqlalchemy.py
+          --ignore=tests/test_streams.py --ignore=tests/test_adapters.py --ignore=tests/test_pubsub.py
+          --ignore=tests/test_gallery.py

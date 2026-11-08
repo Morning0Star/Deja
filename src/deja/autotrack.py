@@ -316,6 +316,8 @@ def _swap(objs, names, owners):
     for r in gc.get_referrers(*objs):
         if r is objs or (type(r) is tuple and len(r) == len(objs) and all(a is b for a, b in zip(r, objs))):
             continue  # our own list, and the argument tuple of this very call
+        if type(r) is types.FrameType and r.f_code in _OWN_CODE:
+            continue  # Déjà's own frames (PyPy reports running frames as referrers; CPython doesn't)
         if type(r) is dict and (id(r) in owners or id(r) in module_dicts):
             for k, v in r.items():
                 i = index.get(id(v))
@@ -337,8 +339,8 @@ def _swap(objs, names, owners):
                     where[i].append((r.__dict__, k))
         else:
             for v in gc.get_referents(r):
-                if id(v) in index and v is objs[index[id(v)]]:
-                    unsafe.add(index[id(v)])
+                if id(v) in index and v is objs[index[id(v)]] and getattr(v, "__dict__", None) is not r:
+                    unsafe.add(index[id(v)])  # (PyPy: an object's own attribute dict refers back to it)
     # locals of functions running right now (any thread) don't show up as referrers: look at the stacks
     for frame in sys._current_frames().values():
         while frame is not None:

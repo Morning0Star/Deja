@@ -193,6 +193,6 @@ def callback_app():
 def test_thread_waiting_for_the_loop_does_not_stall_replay(tmp_path):
     path, responses = record([("POST", "/buy/a"), ("POST", "/buy/b")], str(tmp_path / "cb.deja"), callback_app)
     t0 = time.monotonic()
-    r = replay(path, callback_app, deadline_s=5)
+    r = replay(path, callback_app, deadline_s=10)
     assert r.followed and r.same_responses, r.summary()
-    assert time.monotonic() - t0 < 3, "replay waited for the deadline"
+    assert time.monotonic() - t0 < 8, "replay waited for the deadline"

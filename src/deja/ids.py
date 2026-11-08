@@ -105,11 +105,13 @@ class TaskRegistry:
 
     def _track(self, task, key, path):
         # weakref.ref with a callback is several times cheaper than weakref.finalize (no global registry)
-        self._refs[key] = weakref.ref(task, lambda _r, k=key, p=path: self._forget(k, p))
+        self._refs[key] = weakref.ref(task, lambda r, k=key, p=path: self._forget(k, p, r))
 
-    def _forget(self, key, path):
-        # The weakref callback runs while the dying task still owns its id (memory is freed afterwards), so the
-        # entry can be dropped unconditionally, including after rebind() changed the path.
+    def _forget(self, key, path, ref=None):
+        # On CPython the weakref callback runs while the dying task still owns its id. On PyPy it can run later,
+        # after a new task got the same id: then the entry is the new task's and must stay.
+        if ref is not None and self._refs.get(key) is not ref:
+            return
         self._refs.pop(key, None)
         current = self._paths.pop(key, None)
         self._kids.pop(path, None)
