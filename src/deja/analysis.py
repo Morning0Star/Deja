@@ -108,6 +108,41 @@ REDIS_READ = {"GET", "MGET", "HGET", "HGETALL", "HMGET", "HEXISTS", "HLEN", "EXI
 _REDIS_ALL_KEYS = {"MGET", "EXISTS", "DEL", "UNLINK", "WATCH", "TOUCH", "SUNION", "SINTER", "SDIFF"}
 
 
+_AWS_READ = ("Get", "Head", "List", "Describe", "Query", "Scan", "BatchGet")
+
+
+def _aws_key(key):
+    """DynamoDB key ``{"id": {"S": "1"}}`` as ``id=1``."""
+    parts = []
+    for name, typed in (key or {}).items():
+        v = next(iter(typed.values())) if isinstance(typed, dict) and typed else typed
+        parts.append(f"{name}={v}")
+    return ", ".join(parts)
+
+
+def _aws_touches(d):
+    service, operation, p = d["service"], d["operation"], d.get("params") or {}
+    kind = "read" if operation.startswith(_AWS_READ) else "write"
+    if service == "s3" and p.get("Bucket"):
+        res = f"s3 {p['Bucket']}/{p['Key']}" if p.get("Key") else f"s3 {p['Bucket']}"
+        if operation.startswith("List") and p.get("Prefix") is not None:
+            res = f"s3 {p['Bucket']}/{p['Prefix']}*"
+    elif service == "dynamodb" and p.get("TableName"):
+        key = p.get("Key")
+        res = f"dynamodb {p['TableName']}[{_aws_key(key)}]" if isinstance(key, dict) else f"dynamodb {p['TableName']}"
+        if p.get("ConditionExpression") and kind == "write":  # a conditional write checks and writes in one step
+            return [{"resource": res, "kind": "write", "writes": {"(conditional)": True}}]
+    elif p.get("QueueUrl"):
+        res = f"{service} {str(p['QueueUrl']).rsplit('/', 1)[-1]}"
+        kind = "write"  # receiving hides the message from others: it changes the queue
+    else:
+        res = f"{service} {operation}"
+    t = {"resource": res, "kind": kind}
+    if kind == "write":
+        t["writes"] = {f"({operation})": True}
+    return [t]
+
+
 def _redis_touches(args):
     """Touches of one Redis command: every key it names (MGET / DEL / MSET / EVAL keys), read or written."""
     if not args:
@@ -157,6 +192,8 @@ def call_touches(io: dict, kinds: dict | None = None) -> list[dict]:
         for c in d["commands"]:
             out += _redis_touches(c)
         return out
+    if op == "aws.call" and d.get("operation"):
+        return _aws_touches(d)
     if op in ("grpc.call", "grpc.stream") and d.get("method"):
         import fnmatch
 
@@ -175,6 +212,8 @@ def call_touches(io: dict, kinds: dict | None = None) -> list[dict]:
 # ---------------------------------------------------------------------- helpers
 def short(value, limit=60):
     """One-line human form of an encoded result."""
+    if isinstance(value, dict) and value.get("__t") == "aws":
+        return "AWS response"
     if isinstance(value, dict) and value.get("__t") == "grpc":
         return "gRPC response"
     if isinstance(value, dict) and value.get("__t") in ("httpx", "aiohttp"):
@@ -293,6 +332,8 @@ def analyze(header: dict, events: list) -> dict:
                 row = {**tch, "seq": io["seq0"] if at_start else seq, "t": io["t0"] if at_start else t1,
                        "req": io["req"], "task": e[1], "op": e[2], "value": value, "_result": decoded,
                        "result": io["result"], "source": "recorded call"}
+                if not e[2].startswith(("pg.", "sql.")):  # an HTTP endpoint, an S3 object, a gRPC method: one thing
+                    row.setdefault("precise", True)
                 level = iso.get(e[1])
                 if level is not None and e[2].startswith(("pg.", "sql.")):
                     if level["snap"] is None:

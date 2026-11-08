@@ -20,7 +20,7 @@ from .. import codec
 _get_loop = asyncio._get_running_loop
 _inside = contextvars.ContextVar("deja_inside_io", default=False)  # suppress nested adapter calls
 
-KNOWN = ("asyncpg", "httpx", "redis", "anyio", "aiohttp", "psycopg", "aiosqlite", "grpc")
+KNOWN = ("asyncpg", "httpx", "redis", "anyio", "aiohttp", "psycopg", "aiosqlite", "grpc", "aiobotocore")
 EXECUTOR_OP = "executor"  # loop.run_in_executor, recorded by the loop itself
 OPTIONAL_OPS = {"pg.prepare"}  # may be skipped by a client-side cache (SQLAlchemy's statement cache); see replay
 OUTSIDE_LIMIT = 500  # distinct out-of-request calls (startup queries) whose results are kept for replay
@@ -95,6 +95,20 @@ async def io_call(op: str, key, real, *, encode=codec.encode, decode=codec.decod
         _inside.reset(token)
     rec.io_end(path, op, key, "ok", encode(result))
     return result
+
+
+async def io_live(op: str, key, real):
+    """A call that must really run in replay too (it builds an object the app keeps, like an AWS client), but whose
+    internal steps depend on library caches: recorded as one call; in replay it runs live in a background task
+    while the request waits for it as one step, so a cold or warm cache can't change the request's steps."""
+    if _inside.get():
+        return await real()
+    rec, path = _context()
+    if rec is None or path is None:
+        return await real()
+    if not getattr(rec, "replaying", False):
+        return await io_call(op, key, real, encode=lambda v: None)
+    return await rec.io_replay_live(path, op, digest(key), real)
 
 
 async def _outside(rec, op, key, real, encode):

@@ -56,6 +56,14 @@ def _detail(op, key):
             what = text if text is not None else (f"<{len(data)} bytes>" if data is not None else
                                                    f"close {code}" if kind == "websocket.close" else kind)
             return {"message": str(what)[:2000]}
+        if op == "aws.call" and isinstance(key, tuple) and len(key) == 4:
+            from .codec import decode
+
+            params = decode(key[3])
+            keep = {k: (v if not isinstance(v, (bytes, bytearray)) else f"<{len(v)} bytes>")
+                    for k, v in (params or {}).items() if k in ("Bucket", "Key", "Prefix", "TableName", "Key",
+                                                                 "QueueUrl", "ConditionExpression")}
+            return {"service": key[1], "operation": key[2], "params": keep}
         if op in ("grpc.call", "grpc.stream") and isinstance(key, tuple) and len(key) == 3:
             return {"method": key[1], "request_bytes": len(key[2] or b"")}
         if op == "executor" and isinstance(key, tuple):

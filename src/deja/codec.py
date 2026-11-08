@@ -138,6 +138,8 @@ def decode(v):
 def encode_exc(exc: BaseException) -> dict:
     cls = type(exc)
     out = {"__t": "exc", "type": f"{cls.__module__}:{cls.__qualname__}", "msg": str(exc)}
+    if isinstance(getattr(exc, "response", None), dict) and getattr(exc, "operation_name", None):  # botocore
+        out["aws"] = [encode(exc.response), exc.operation_name]
     if cls.__module__.startswith("grpc") and callable(getattr(exc, "code", None)):  # status code and details
         try:
             out["grpc"] = [exc.code().name, exc.details()]
@@ -147,6 +149,15 @@ def encode_exc(exc: BaseException) -> dict:
 
 
 def decode_exc(v: dict) -> BaseException:
+    if v.get("aws"):
+        try:
+            module, _, qualname = v["type"].partition(":")
+            obj = importlib.import_module(module)
+            for part in qualname.split("."):
+                obj = getattr(obj, part)
+            return obj(decode(v["aws"][0]), v["aws"][1])
+        except Exception:
+            pass
     if v.get("grpc"):
         try:
             import grpc

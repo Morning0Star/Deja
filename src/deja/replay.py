@@ -285,6 +285,31 @@ class ReplayRecorder(Recorder):
         loop.call_soon(fut.set_result, None)
         await fut
 
+    async def io_replay_live(self, path, op, digest, real):
+        """Run ``real()`` for real, outside request scope, and resume the request once, as the recorded call did."""
+        from .adapters import _inside
+
+        queue = self._io.get(path)
+        if not queue or queue[0].op != op:
+            self.io_misses.append(f"{path}: {op} was not called here in the recording")
+            entry = None
+        else:
+            entry = queue.popleft()
+            if entry.kids:
+                self.ids._kids[path] = self.ids._kids.get(path, 0) + entry.kids
+        loop = asyncio.get_running_loop()
+        done = loop.create_future()
+        ctx = contextvars.copy_context()
+        ctx.run(_inside.set, True)
+
+        def launch():  # from a plain callback: the task is a root, environment work, not a child of the request
+            task = loop.create_task(real(), context=ctx)
+            task.add_done_callback(lambda t: done.cancelled() or (
+                done.set_exception(t.exception()) if t.exception() else done.set_result(t.result())))
+
+        loop.call_soon(launch)
+        return await done
+
     async def io_replay(self, path, op, digest, decode):
         """Answer an adapter call from the recording, suspending exactly when the recorded call suspended."""
         from . import codec
