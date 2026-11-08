@@ -107,19 +107,24 @@ def _child(parent, k, v):
     return copy_of(v, _res(parent._deja_name, parent._deja_key, k))
 
 
+_APP_TYPES: dict = {}  # type -> whether its instances are the app's own (decided once per class)
+
+
 def _app_object(v, parent, k):
     """Track an app object found in a tracked container in place (same object, so always safe)."""
-    if v is None or isinstance(v, (int, float, str, bytes, bool, tuple, frozenset)) or isinstance(v, TRACKED):
-        return
-    if not hasattr(v, "__dict__") or type(v) in _classes.values() or annotate._recorder() is None and _thread.get() is None:
-        return
-    from .autotrack import _is_app_object
+    t = type(v)
+    ok = _APP_TYPES.get(t)
+    if ok is None:
+        from .autotrack import _is_app_object
 
-    if _is_app_object(v) and _swappable(type(v)):
-        try:
-            track_object(v, _res(parent._deja_name, parent._deja_key, k))
-        except TypeError:
-            pass
+        ok = _APP_TYPES[t] = (t not in _classes.values() and hasattr(v, "__dict__") and _is_app_object(v)
+                              and _swappable(t))
+    if not ok or (annotate._recorder() is None and _thread.get() is None):
+        return
+    try:
+        track_object(v, _res(parent._deja_name, parent._deja_key, k))
+    except TypeError:
+        _APP_TYPES[t] = False
 
 
 def _res(name, key, k):

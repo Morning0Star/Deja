@@ -89,6 +89,38 @@ def _detail(op, key):
         return {}
 
 
+_PLAIN = (type(None), bool, int, float, str)
+
+
+def _brief(value, depth=0):
+    """The value of an access as the report shows it: plain data encoded (containers up to 50 items, 3 deep), other
+    objects as their type, so reading a client or a pool out of shared state costs next to nothing."""
+    from .codec import encode
+
+    t = type(value)
+    if t in _PLAIN:
+        return value
+    if t in (list, tuple, set, frozenset) or isinstance(value, (list, tuple, set, frozenset)):
+        if depth >= 3 or len(value) > 50:
+            return f"<{t.__name__} of {len(value)}>"
+        return encode(type(value)(_decoded_brief(x, depth) for x in value) if t is not set else
+                      [_decoded_brief(x, depth) for x in value])
+    if isinstance(value, dict):
+        if depth >= 3 or len(value) > 50:
+            return f"<{t.__name__} of {len(value)}>"
+        return encode({k: _decoded_brief(x, depth) for k, x in dict.items(value)})
+    if t.__module__ in ("datetime", "decimal", "uuid") or isinstance(value, (bytes, bytearray)):
+        return encode(value)
+    return f"<{t.__name__}>"
+
+
+def _decoded_brief(x, depth):
+    from .codec import decode
+
+    v = _brief(x, depth + 1)
+    return decode(v) if isinstance(v, dict) else v
+
+
 def _digest(key):
     from .adapters import digest
 
@@ -173,9 +205,7 @@ class Recorder:
 
     def touch(self, resource: str, kind: str, value=None):
         """App-reported access to in-memory state (``deja.touch``): kind is "read" or "write"."""
-        from .codec import encode
-
-        self.buffer.append((ev.TOUCH, self.current_path(), str(resource), kind, encode(value), _now()))
+        self.buffer.append((ev.TOUCH, self.current_path(), str(resource), kind, _brief(value), _now()))
 
     def next_listener(self) -> int:
         return next(self._listener_ids)
