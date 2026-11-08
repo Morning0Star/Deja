@@ -362,6 +362,8 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
         self._env_streak = 0
         self.code_changed: list = []  # app modules whose source differs from the recording's
         self.io_grace = 0.0  # real seconds to wait for socket I/O before jumping the virtual clock
+        self._tasks: dict = {}  # path -> the replayed task that last took a step under it
+        self.tail_skipped: list = []  # recorded steps of tasks that had already finished in replay
 
     def time(self):
         return self.vt
@@ -587,8 +589,17 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
                     del ready[i]
                     self.pos += 1
                     self._env_streak = 0
+                    self._tasks[want] = h._callback.__self__
                     self._run(h, want)
                     return
+            done = self._tasks.get(want)
+            if kind == "step" and done is not None and done.done():
+                # the task already finished: library internals after the app's work (an executor's or a
+                # transport's extra wake-up on this Python version) took steps the replay doesn't need
+                self.pos += 1
+                self.tail_skipped.append(want)
+                self._progress()
+                continue
             if starved:  # the step isn't ready after all: let the environment work run again
                 self._env_streak = 0
                 continue
@@ -745,6 +756,7 @@ class ReplayResult:
         self.read_misses = list(loop.deja.read_misses)
         self.io_misses = list(loop.deja.io_misses)
         self.code_changed = list(loop.code_changed)
+        self.tail_skipped = list(loop.tail_skipped)
         self.skipped = sorted(schedule.skipped)
         seed = schedule.header.get("hash_seed")
         self.hash_seed_differs = bool(seed) and os.environ.get("PYTHONHASHSEED") != seed
@@ -761,6 +773,9 @@ class ReplayResult:
     def summary(self) -> str:
         lines = [f"followed {self.steps_followed}/{self.steps_expected} recorded steps"
                  + (f", {len(self.extra_steps)} extra" if self.extra_steps else "")]
+        if self.tail_skipped:
+            lines.append(f"NOTE: {len(self.tail_skipped)} recorded step(s) came after their task had finished in replay "
+                         f"({', '.join(sorted(set(self.tail_skipped)))}): library wake-ups after the app's work")
         if self.skipped:
             lines.append("NOTE: left out " + ", ".join(self.skipped) + ": they began before the recording window "
                          "(long WebSocket connections); a bigger buffer (Recorder(max_events=...)) keeps them")
