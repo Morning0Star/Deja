@@ -230,6 +230,13 @@ class TrackedDefaultDict(_MappingOps, collections.defaultdict):
     update = TrackedDict.update
     __ior__ = TrackedDict.__ior__
 
+    def __missing__(self, k):  # 3.14.x inserts the default without __setitem__: do it here, reported, everywhere
+        if self.default_factory is None:
+            raise KeyError(k)
+        v = self.default_factory()
+        self[k] = v
+        return v
+
     def __reduce__(self):
         return collections.defaultdict, (self.default_factory, dict.copy(self))
 

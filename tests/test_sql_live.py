@@ -10,6 +10,7 @@ from fastapi import FastAPI
 
 from test_adapters import DEAD_PORT_DSN, PG_DSN, reachable
 from test_streams import record_concurrently
+from deja import sqltouch
 from deja.analysis import analyze
 from deja.fileformat import read
 from deja.replay import replay
@@ -55,7 +56,9 @@ def test_double_booking_inside_transactions_is_found_and_replays_without_the_dat
     assert [r.json() for r in responses] == [{"ok": True}, {"ok": True}], "both booked room 5 for day 10"
     a = analyze(*read(path))
     c = a["conflicts"][0]
-    assert c["pattern"] == "check-then-act" and c["resource"] == "deja_bookings[room=5, day=10]", a["story"]
+    # without sqlglot the simple SQL rules name a row by its first key only
+    row = "deja_bookings[room=5, day=10]" if sqltouch.available() else "deja_bookings[room=5]"
+    assert c["pattern"] == "check-then-act" and c["resource"] == row, a["story"]
     assert c["confidence"] == "certain"
     r = replay(path, booking_app(DEAD_PORT_DSN), deadline_s=5)
     assert r.followed and r.same_responses, r.summary()
