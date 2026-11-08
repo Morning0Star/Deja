@@ -17,20 +17,19 @@ class MemoryStore:
     def __init__(self):
         self.likes = 0
         self.accepted = 0
+        deja.track(self, "post")
 
     async def reset(self):
         self.likes = self.accepted = 0
 
     async def get(self):
         await _io.io()
-        deja.touch("post.likes", "read", self.likes)
         return self.likes
 
     async def put(self, n):
         await _io.io()
         self.likes = n
         self.accepted += 1
-        deja.touch("post.likes", "write", n)
 
     async def state(self):
         return self.likes, self.accepted

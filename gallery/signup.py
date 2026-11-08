@@ -20,21 +20,18 @@ class Signup(BaseModel):
 
 class MemoryStore:
     def __init__(self):
-        self.users: list[str] = []
+        self.users: list[str] = deja.track([], "users", key="username")
 
     async def reset(self):
-        self.users = []
+        self.users.clear()
 
     async def exists(self, name):
         await _io.io()
-        found = name in self.users
-        deja.touch(f"users[username={name}]", "read", found)
-        return found
+        return name in self.users
 
     async def insert(self, name):
         await _io.io()
         self.users.append(name)
-        deja.touch(f"users[username={name}]", "write", name)
 
     async def count(self, name):
         return self.users.count(name)

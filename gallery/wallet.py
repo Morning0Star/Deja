@@ -30,20 +30,19 @@ class MemoryStore:
     def __init__(self):
         self.balance = START
         self.charged = 0
+        deja.track(self, "wallet")
 
     async def reset(self):
         self.balance, self.charged = START, 0
 
     async def get_balance(self):
         await _io.io()
-        deja.touch("wallet.balance", "read", self.balance)
         return self.balance
 
     async def deduct(self, before, amount):
         await _io.io()
         self.balance = before - amount
         self.charged += amount
-        deja.touch("wallet.balance", "write", self.balance)
 
     async def state(self):
         return self.balance, self.charged
