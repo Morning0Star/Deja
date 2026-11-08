@@ -7,6 +7,7 @@ one, up to now.
 
 import asyncio
 import collections
+import contextvars
 import itertools
 import os
 import sys
@@ -23,6 +24,13 @@ DEFAULT_MAX_EVENTS = 200_000  # ~15-20k requests of history for a typical API; m
 
 
 LABELS: dict[str, str] = {}  # friendly names for routes, resources and calls (deja.labels)
+# set while the app starts up (ASGI lifespan): app tasks created then are background tasks, b0, b1...
+background = contextvars.ContextVar("deja_background", default=False)
+
+
+def in_scope(path) -> bool:
+    """A request (q...) or a background task of the app (b...): what recording orders and the report explains."""
+    return bool(path) and path[0] in "qb"
 CALL_KINDS: dict[str, str] = {}  # "METHOD host/path" pattern -> "read" | "write" | "ignore" (deja.calls)
 
 
@@ -104,6 +112,7 @@ class Recorder:
         self.catalog: dict = {}  # adapter metadata replay needs (statement columns, startup call results)
         self._listener_ids = itertools.count()  # LISTEN callbacks, numbered in registration order
         self._thread_n: dict[str, int] = {}  # task path -> worker-thread calls made so far (deja.threads)
+        self._bg = itertools.count()  # background tasks of the app, numbered in creation order
 
     # ------------------------------------------------------------------ events
     def _on_task_new(self, path, parent_path, task):
@@ -123,6 +132,20 @@ class Recorder:
         except RuntimeError:  # another thread, no event loop
             return None
         return self.ids.path(task) if task is not None else None
+
+    def background_name(self, coro) -> str | None:
+        """``b{n}`` for a task the app starts during startup running its own code (else None: library internals
+        such as a pool's maintenance task stay environment work)."""
+        code = getattr(coro, "cr_code", None) or getattr(coro, "gi_code", None)
+        if code is None:
+            return None
+        from .autotrack import _app_file
+
+        if not _app_file(code.co_filename):
+            return None
+        name = f"b{next(self._bg)}"
+        self.catalog.setdefault("background", {})[name] = getattr(coro, "__qualname__", code.co_name)
+        return name
 
     def thread_path(self, path: str) -> str:
         """Path of the next worker-thread call made by task ``path`` (``q3.t0``, ``q3.t1``...)."""

@@ -46,7 +46,11 @@ def _context():
     if rec is None or _inside.get():
         return rec, None
     path = rec.current_path()
-    return rec, (path if path is not None and path.startswith("q") else None)
+    if not path or path[0] not in "qb":
+        return rec, None
+    if path[0] == "b" and getattr(rec, "replaying", False) and not rec.armed:
+        return rec, None  # a background task during replay's startup: answered like startup work
+    return rec, path
 
 
 def passthrough() -> bool:
@@ -95,7 +99,20 @@ async def io_call(op: str, key, real, *, encode=codec.encode, decode=codec.decod
     finally:
         _inside.reset(token)
     rec.io_end(path, op, key, "ok", encode(result))
+    if path[0] == "b":  # replay runs background tasks from startup: keep their answers like startup work's
+        _keep(rec, op, key, ("ok", encode(result)))
     return result
+
+
+def _keep(rec, op, key, entry):
+    out = rec.catalog.setdefault("outside", {})
+    d = f"{op}:{digest(key)}"
+    seen = out.get(d)
+    if (seen is None and len(out) < OUTSIDE_LIMIT) or (seen is not None and len(seen) < OUTSIDE_PER_CALL):
+        try:
+            out.setdefault(d, []).append(entry)
+        except Exception:
+            pass
 
 
 def _sync_context():

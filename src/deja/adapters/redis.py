@@ -80,7 +80,7 @@ def install():
                 return await original(self, block, timeout)
             lid = _pubsub_id(self)
             rec, path = _context()
-            if path is not None:  # inside a request: an ordinary recorded call
+            if path is not None and path[0] == "q":  # inside a request: an ordinary recorded call
                 return await io_call("redis.pubsub", ("pubsub", block), lambda: original(self, block, timeout))
             if replaying():
                 return await rec.pubsub_read(lid, block, timeout)

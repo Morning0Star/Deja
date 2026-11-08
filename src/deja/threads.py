@@ -43,7 +43,7 @@ def _wrap(func):
         loop = asyncio._get_running_loop()
         rec = getattr(loop, "deja", None) if loop is not None else None
         path = rec.current_path() if rec is not None and not adapters._inside.get() else None
-        if path is None or not path.startswith("q"):
+        if not path or path[0] not in "qb":
             return await func(cls, func_, args, abandon_on_cancel, limiter)
         tpath = rec.thread_path(path)
 

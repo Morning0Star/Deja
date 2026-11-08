@@ -363,11 +363,11 @@ def analyze(header: dict, events: list) -> dict:
             r.update(end=t, status=e[2],
                      response=body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else body,
                      failed=(e[2] == 1011) if r["method"] == "WS" else e[2] >= 500)
-        elif code == ev.STEP and e[1] and e[1].startswith("q"):
+        elif code == ev.STEP and e[1] and e[1][0] in "qb":
             steps.append({"seq": seq, "t": now, "task": e[1], "req": _root(e[1])})
-        elif code == ev.IO_START and e[1] and e[1].startswith("q"):
+        elif code == ev.IO_START and e[1] and e[1][0] in "qb":
             open_io[e[1]] = {"t0": stamp(e[3] if len(e) > 3 else None), "seq0": seq}
-        elif code == ev.IO_END and e[1] and e[1].startswith("q"):
+        elif code == ev.IO_END and e[1] and e[1][0] in "qb":
             start = open_io.pop(e[1], {"t0": now, "seq0": seq})
             t1 = stamp(e[6] if len(e) > 6 else None)
             io = {"seq": seq, "seq0": start["seq0"], "task": e[1], "req": _root(e[1]), "op": e[2], "t0": start["t0"],
@@ -430,7 +430,7 @@ def analyze(header: dict, events: list) -> dict:
             if e[4] == "err" and "deadlock" in str((io.get("raw") or {}).get("type", "")).lower():
                 deadlocks.append({"io": io, "held": {k: list(v) for k, v in held.items() if k != e[1]},
                                   "mine": list(held.get(e[1], []))})
-        elif code == ev.TOUCH and e[1] and e[1].startswith("q"):
+        elif code == ev.TOUCH and e[1] and e[1][0] in "qb":
             t = stamp(e[5] if len(e) > 5 else None)
             touches.append({"resource": e[2], "kind": e[3], "seq": seq, "t": t, "req": _root(e[1]), "task": e[1],
                             "op": "deja.touch", "value": codec.decode(e[4]),
@@ -441,6 +441,13 @@ def analyze(header: dict, events: list) -> dict:
     for stack in tx.values():  # still open when the recording ends: not visible to anyone yet
         stack.clear()
     touches.sort(key=lambda t: t["seq"])
+    background = (header.get("catalog") or {}).get("background") or {}
+    for root in sorted({_root(x["task"]) for x in steps} | {t["req"] for t in touches}):
+        if root and root[0] == "b" and root not in requests:
+            first = next((x["t"] for x in steps if _root(x["task"]) == root), 0)
+            requests[root] = {"id": root, "rid": root, "method": "TASK", "path": background.get(root, root),
+                              "body": "", "start": first, "end": now, "status": None, "response": None, "seq": 0,
+                              "kind": "background", "failed": False}
     touches = _narrow(touches)
     conflicts = _conflicts(touches)
     skew = [c for c in _write_skew(touches, conflicts)  # a range check-then-act already tells this one
@@ -458,7 +465,7 @@ def analyze(header: dict, events: list) -> dict:
         c["story"] = _story([c], requests, names, {}, labels)
         c["moments"] = _moments([c], touches, names, labels, requests)
     return {
-        "requests": [requests[k] for k in sorted(requests)],
+        "requests": [requests[k] for k in sorted(requests, key=lambda k: (isinstance(k, str), str(k).zfill(9)))],
         "steps": steps, "ios": [{k: v for k, v in io.items() if k != "raw"} for io in ios],
         "touches": [{k: (v if k != "value" else short(codec.encode(v))) for k, v in t.items()
                      if k[0] != "_" and k != "only"} for t in touches],
@@ -848,6 +855,18 @@ def _deadlocks(found, ios):
     return out
 
 
+def _req(requests, rid):
+    """The request (``q3``) or background task (``b0``) entry of a path root."""
+    if not rid:
+        return {}
+    if rid[0] == "q":
+        try:
+            return requests.get(int(rid[1:])) or {}
+        except ValueError:
+            return {}
+    return requests.get(rid) or {}
+
+
 def _names(conflicts, requests):
     names, letters = {}, iter("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
     for c in conflicts:
@@ -862,6 +881,8 @@ def _label(text, labels):
 
 
 def _req_label(req, labels):
+    if req.get("method") == "TASK":
+        return _label(f"background task {req['path']}", labels)
     if req.get("method") == "JOB":
         return _label(f"job {req['path']}", labels)
     if req.get("method") == "WS":
@@ -870,7 +891,7 @@ def _req_label(req, labels):
 
 
 def _noun(req):
-    return {"WS": "connection", "JOB": "job"}.get(req.get("method"), "request")
+    return {"WS": "connection", "JOB": "job", "TASK": "background task"}.get(req.get("method"), "request")
 
 
 def _story(conflicts, requests, names, header, labels):
@@ -879,8 +900,8 @@ def _story(conflicts, requests, names, header, labels):
         base = "Déjà found no conflicting reads and writes between requests in this recording."
         return base + (f" It was saved because: {reason}." if reason else "")
     c = conflicts[0]
-    ra = requests.get(int(c["a"][1:]), {})
-    rb = requests.get(int(c["b"][1:]), {})
+    ra = _req(requests, c["a"])
+    rb = _req(requests, c["b"])
     A, B, res = names[c["a"]], names[c["b"]], _label(c["resource"], labels)
     what_a, what_b = _req_label(ra, labels) if ra else c["a"], _req_label(rb, labels) if rb else c["b"]
     if what_a == what_b:
@@ -949,7 +970,7 @@ def _moments(conflicts, touches, names, labels, requests=None):
     # the conflict's own accesses, and other accesses to the same things (not unrelated state in between)
     involved = {t["resource"] for t in touches if t["seq"] in c["seqs"]} | {c["resource"]} | set(c.get("rows") or ())
     other = "request"
-    if requests and any((requests.get(int(r[1:])) or {}).get("method") == "WS" for r in reqs):
+    if requests and any(_req(requests, r).get("method") == "WS" for r in reqs):
         other = "connection"
     out = []
     for t in sorted(touches, key=lambda t: t["seq"]):

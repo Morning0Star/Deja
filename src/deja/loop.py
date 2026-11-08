@@ -18,7 +18,7 @@ from asyncio import base_events
 
 from . import _compat, adapters, codec, shims
 from . import events as ev
-from .recorder import Recorder
+from .recorder import Recorder, background, in_scope
 
 _monotonic = time.monotonic  # captured before shims patch time.monotonic
 _perf_ns = time.perf_counter_ns  # one read per loop pass gives the report a real time axis
@@ -75,7 +75,11 @@ class _RecordingMixin:
 
     def _deja_task_factory(self, loop, coro, **kwargs):
         ids = self.deja.ids
-        slot = ids.reserve(asyncio.current_task(loop))
+        parent = asyncio.current_task(loop)
+        root = None
+        if background.get() and (parent is None or not in_scope(ids.path(parent))):
+            root = self.deja.background_name(coro)
+        slot = ids.reserve(parent, root)
         task = None
         try:
             inner = self._deja_inner_factory
@@ -96,7 +100,7 @@ class _RecordingMixin:
         if getattr(rec, "replaying", False) or adapters._inside.get():
             return super().run_in_executor(executor, func, *args)
         path = rec.current_path()
-        if path is None or not path.startswith("q"):
+        if not path or path[0] not in "qb":
             return super().run_in_executor(executor, func, *args)
         key = (getattr(func, "__qualname__", None) or type(func).__name__, args)
         fut = super().run_in_executor(executor, _in_thread(rec, rec.thread_path(path), func), *args)

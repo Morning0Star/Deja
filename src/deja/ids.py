@@ -29,8 +29,10 @@ class TaskRegistry:
         self.on_gone = None  # callback(task_id) when a registered task is garbage-collected
 
     # ------------------------------------------------------------------ creation via the task factory
-    def reserve(self, parent) -> list:
-        if parent is None:
+    def reserve(self, parent, root=None) -> list:
+        if root is not None:  # a named root (a background task: b0, b1...)
+            path, parent_path = root, None
+        elif parent is None:
             path, parent_path = f"r{self._roots}", None
             self._roots += 1
         else:

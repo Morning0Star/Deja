@@ -24,7 +24,7 @@ def _recorder():
     if rec is None or getattr(rec, "replaying", False):
         return None
     path = rec.current_path()
-    return rec if path is not None and path.startswith("q") else None
+    return rec if path and path[0] in "qb" else None
 
 
 def touch(resource: str, kind: str = "read", value=None) -> None:

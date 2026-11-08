@@ -69,7 +69,7 @@ class Schedule:
         self.skipped: set[str] = set()  # requests (long connections) that began before the recording window
 
         def is_ignored(path):
-            if path.split(".", 1)[0] not in started:  # began before the recording window: can't be replayed
+            if path[0] == "q" and path.split(".", 1)[0] not in started:  # began before the window: can't replay
                 if path.startswith("q"):
                     self.skipped.add(path.split(".", 1)[0])
                 return True
@@ -86,7 +86,7 @@ class Schedule:
                     call["passes"] += 1
             elif code == ev.STEP:
                 path = e[1]
-                if not path or not path.startswith("q") or is_ignored(path):
+                if not path or path[0] not in "qb" or is_ignored(path):
                     continue
                 if path in open_io:
                     open_io[path]["steps"].append(len(entries))
@@ -97,7 +97,7 @@ class Schedule:
                     if parent in open_io:
                         open_io[parent]["kids"] += 1
                     ignored.add(path)
-            elif code == ev.IO_START and e[1] and e[1].startswith("q") and not is_ignored(e[1]):
+            elif code == ev.IO_START and e[1] and e[1][0] in "qb" and not is_ignored(e[1]):
                 open_io[e[1]] = {"op": e[2], "steps": [], "kids": 0, "passes": 0}
             elif code == ev.IO_END and e[1] in open_io:
                 call = open_io.pop(e[1])
@@ -106,7 +106,7 @@ class Schedule:
                 # library calls: suspended iff the task stepped inside; executor calls: iff the loop ran a pass
                 yielded = bool(call["steps"]) or (e[2] == "executor" and call["passes"] > 0)
                 self.io[e[1]].append(IOEntry(e[2], e[3], e[4], e[5], yielded, call["kids"]))
-            elif code == ev.READ and e[1] and e[1].startswith("q"):
+            elif code == ev.READ and e[1] and e[1][0] in "qb":
                 if e[1] in open_io or is_ignored(e[1]):
                     continue
                 self.reads[e[1]].append((e[2], e[3]))
@@ -114,7 +114,7 @@ class Schedule:
                 self.responses[e[1]] = (e[2], e[3] if len(e) > 3 else b"")
             elif code == ev.NOTIFY:
                 entries.append(("notify", tuple(e[1:5])))
-            elif code == ev.TOUCH and is_thread_path(e[1]) and e[1].startswith("q") and not is_ignored(e[1]):
+            elif code == ev.TOUCH and is_thread_path(e[1]) and e[1][0] in "qb" and not is_ignored(e[1]):
                 entries.append(("thread", e[1]))  # a worker thread's access to tracked state: replay gates it here
         self.entries = [x for x in entries if x is not None]
         self.thread_gates = collections.Counter(v for k, v in self.entries if k == "thread")
@@ -254,9 +254,13 @@ class ReplayRecorder(Recorder):
     def forget_request(self, rid):
         pass
 
+    @property
+    def armed(self) -> bool:
+        return bool(getattr(self.loop, "armed", False))
+
     def read(self, source, value):
         path = self.current_path()
-        if path is None or not path.startswith("q"):
+        if not path or path[0] not in "qb" or (path[0] == "b" and not self.armed):
             return value
         queue = self.schedule.reads.get(path)
         if queue and queue[0][0] == source:
@@ -332,7 +336,7 @@ class ReplayRecorder(Recorder):
         from .adapters import OPTIONAL_OPS
 
         queue = self._io.get(path)
-        if op == "ws.receive" and not queue and path.startswith("q") and "." not in path:
+        if op == "ws.receive" and not queue and path[0] == "q" and "." not in path:
             if int(path[1:]) not in self.schedule.responses:
                 # the connection was still open when the recording was saved: the client sent nothing more
                 await asyncio.get_running_loop().create_future()
@@ -419,7 +423,9 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
         return None
 
     def _controlled(self, path) -> bool:
-        return path is not None and path.startswith("q")
+        if not path:
+            return False
+        return path[0] == "q" or (path[0] == "b" and self.armed)  # background tasks: once startup is over
 
     # ------------------------------------------------------------------ helpers
     def _promote_timers(self):
@@ -737,6 +743,10 @@ class ASGIHarness:
             await outbox.put(message)
 
         async def run():
+            from .recorder import background
+
+            if (self.loop.schedule.header.get("catalog") or {}).get("background"):
+                background.set(True)  # as when recording: the app's startup tasks are background tasks b0, b1...
             try:
                 await self.app(scope, receive, send)
             except Exception:

@@ -260,7 +260,7 @@ function draw() {
     g.fillText(N[r.id] ? NOUN(r.id) + " " + N[r.id] : r.id, 10, y + 12);
     g.fillStyle = C.muted; g.font = "11px " + css("--mono");
     const sub = L(r.method + " " + r.path.split("?")[0]); g.fillText(sub.length > (LEFT > 150 ? 26 : 11) ? sub.slice(0, LEFT > 150 ? 25 : 10) + "…" : sub, 10, y + 30);
-    g.fillText((r.kind === "websocket" ? "closed " : "status ") + (r.status ?? "?"), 10, y + 46); });
+    g.fillText(r.kind === "background" ? "started at startup" : (r.kind === "websocket" ? "closed " : "status ") + (r.status ?? "?"), 10, y + 46); });
   drawMini();
 }
 function drawMini() { const [g, w, h] = size(mini); g.fillStyle = C.bg; g.fillRect(0, 0, w, h);
@@ -319,7 +319,8 @@ addEventListener("keydown", e => { if (e.target.tagName === "INPUT") return; con
 // ---------------------------------------------------------------- details
 const who = id => N[id] ? NOUN(id) + " " + N[id] + " (" + id + ")" : id;
 const reqOf = id => D.requests.find(r => r.id === id) || {};
-function NOUN(id) { return (D.requests.find(r => r.id === id) || {}).kind === "websocket" ? "Connection" : "Request"; }
+function NOUN(id) { const r = D.requests.find(r => r.id === id) || {};
+  return {websocket: "Connection", background: "Background task"}[r.kind] || (r.method === "JOB" ? "Job" : "Request"); }
 const chips = ts => (ts || []).map(t => '<span class="touch ' + t.kind + '">' + t.kind.toUpperCase() + " " + esc(L(t.resource)) + "</span>").join("");
 function tipHtml(it) {
   if (it.type === "io") return "<b>" + esc(it.friendly) + "</b><br>" + esc(who(it.req)) + " · " + (it.t1 - it.t0).toFixed(2) + " ms<br>→ " + esc(it.result);

@@ -71,17 +71,26 @@ def flag(reason: str = "") -> None:
 
 class DejaMiddleware:
     def __init__(self, app, directory: str = "deja-recordings", on_dump=None, track: bool = True,
-                 track_skip=(), track_only=None):
+                 track_skip=(), track_only=None, background: bool = True):
         self.app = app
         self.directory = directory
         self.on_dump = on_dump  # optional callback(path, reason) e.g. for logging or tests
         self.track = track  # track shared in-memory state automatically (see deja.autotrack)
+        self.background = background  # order the app's background tasks (started at startup) like requests
         self.track_rules = {"skip": list(track_skip or ()), "only": list(track_only) if track_only is not None else None}
         self.tracked: list = []
         self._warned = False
         self._scanned = False
 
     async def __call__(self, scope, receive, send):
+        if scope["type"] == "lifespan" and self.background:  # tasks the app starts now are background tasks
+            from .recorder import background
+
+            token = background.set(True)
+            try:
+                return await self.app(scope, receive, send)
+            finally:
+                background.reset(token)
         if scope["type"] not in ("http", "websocket"):
             return await self.app(scope, receive, send)
         loop = asyncio.get_running_loop()

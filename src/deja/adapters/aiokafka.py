@@ -104,7 +104,7 @@ def install():
                     return await original(self, *args, **kwargs)
                 lid = _consumer_id(self)
                 rec, path = _context()
-                if path is not None:  # inside a request: an ordinary recorded call
+                if path is not None and path[0] == "q":  # inside a request: an ordinary recorded call
                     return await io_call(f"kafka.{name}", ("kafka", name), lambda: original(self, *args, **kwargs),
                                          encode=encode, decode=decode, default=empty)
                 if replaying():
