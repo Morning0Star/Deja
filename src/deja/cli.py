@@ -140,6 +140,15 @@ def cmd_diff(a) -> int:
     return 0
 
 
+def cmd_shrink(a) -> int:
+    from .shrink import shrink
+
+    got = shrink(a.recording, _load_factory(a.app), a.out, deadline_s=a.deadline)
+    print(f"{a.out}: kept {', '.join(got['kept'])}; removed {', '.join(got['removed']) or 'nothing'}; "
+          f"{got['events'][1]} of {got['events'][0]} events")
+    return 0
+
+
 def cmd_merge(a) -> int:
     import glob
     import os
@@ -193,6 +202,12 @@ def main(argv=None) -> int:
     d.add_argument("--against", required=True, help="module:attribute of the new version")
     d.add_argument("--deadline", type=float, default=10.0)
     d.set_defaults(fn=cmd_diff)
+    sh = sub.add_parser("shrink", help="cut a recording down to the requests the race needs")
+    sh.add_argument("recording")
+    sh.add_argument("--app", required=True, help="module:attribute of the app to replay against")
+    sh.add_argument("-o", "--out", required=True)
+    sh.add_argument("--deadline", type=float, default=10.0)
+    sh.set_defaults(fn=cmd_shrink)
     mg = sub.add_parser("merge", help="merge the workers' recordings of one group request (deja.group)")
     mg.add_argument("folder", help="<group>/<request id>/ holding one .deja per worker")
     mg.add_argument("-o", "--out", required=True)
