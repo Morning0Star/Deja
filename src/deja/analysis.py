@@ -717,10 +717,11 @@ def _deadlocks(found, ios):
             hit = next((r for r in rows if r[0] in waited), None)
             if hit is None:
                 continue
-            # what the other request was waiting for: its statement in flight when the deadlock was reported
-            blocked = next((x for x in ios if x["task"] == task and x["seq0"] < io["seq"] < x["seq"]), None)
+            # what the other request was waiting for: its statement that overlapped the stopped one and touched a
+            # row the stopped transaction held (it often finishes first: the deadlock error released those locks)
             mine = {r[0] for r in d["mine"]}
-            want = next((t["resource"] for t in (blocked or {}).get("touches", []) if t["resource"] in mine), None)
+            want = next((t["resource"] for x in ios if x["task"] == task and x["seq0"] < io["seq"]
+                         and x["seq"] > io["seq0"] for t in x["touches"] if t["resource"] in mine), None)
             a, b = _root(task), io["req"]
             involved = [{"seq": hit[1], "t": hit[2]}, {"seq": io["seq0"], "t": io["t0"]},
                         {"seq": io["seq"], "t": io["t1"]}]
