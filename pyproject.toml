@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deja-replay"
-version = "0.0.1"
+version = "0.0.2"
 description = "Record the real scheduling order of an asyncio app and replay its race conditions deterministically."
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "Kushagra Sagar" }]
-dependencies = []
+dependencies = ["sqlglot>=25"]  # SQL parsing for the report: which rows each statement read and wrote
 keywords = ["asyncio", "race condition", "record replay", "deterministic replay", "debugging", "fastapi", "asgi"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -27,10 +27,10 @@ Repository = "https://github.com/Morning0Star/Deja"
 Documentation = "https://github.com/Morning0Star/Deja#readme"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "redis>=5", "sqlglot>=25", "sqlalchemy[asyncio]>=2"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "redis>=5", "sqlalchemy[asyncio]>=2"]
 gallery = ["fastapi>=0.115", "httpx>=0.27", "uvicorn>=0.30", "asyncpg>=0.30"]
 bench = ["psutil>=5.9"]
-sql = ["sqlglot>=25"]
+sql = []  # kept so `pip install deja-replay[sql]` still works; sqlglot is a dependency now
 
 [project.scripts]
 deja = "deja.cli:main"

@@ -89,11 +89,15 @@ class DejaMiddleware:
                 self._warned = True
                 warnings.warn("deja: not running on a recording loop; requests are not recorded", RuntimeWarning)
             return await self.app(scope, receive, send)
-        if self.track and not self._scanned:  # once, on the first request: startup has built the app's state
+        if not self._scanned:  # once, on the first request: startup has built the app's state
             self._scanned = True
-            from .autotrack import auto_track
+            from .source import fingerprint
 
-            self.tracked = auto_track(scope.get("app"))
+            rec.catalog["source"] = fingerprint(scope.get("app") or self.app)  # replay warns if the code changed
+            if self.track:
+                from .autotrack import auto_track
+
+                self.tracked = auto_track(scope.get("app"))
         if scope["type"] == "websocket":
             return await self._websocket(rec, scope, receive, send)
 

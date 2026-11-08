@@ -386,6 +386,14 @@ class TrackedList(_MemberOps, list):
         self._whole()
         return list.index(self, item, *args)
 
+    def sort(self, *a, **kw):  # reorders every item: a write of the whole list
+        self._whole("write")
+        list.sort(self, *a, **kw)
+
+    def reverse(self):
+        self._whole("write")
+        list.reverse(self)
+
     def copy(self):
         return list(list.__iter__(self))
 
@@ -486,6 +494,14 @@ class TrackedDeque(_MemberOps, collections.deque):
     def __getitem__(self, i):
         self._whole()
         return collections.deque.__getitem__(self, i)
+
+    def rotate(self, n=1):
+        self._whole("write")
+        collections.deque.rotate(self, n)
+
+    def reverse(self):
+        self._whole("write")
+        collections.deque.reverse(self)
 
     def copy(self):
         return collections.deque(collections.deque.__iter__(self), self.maxlen)

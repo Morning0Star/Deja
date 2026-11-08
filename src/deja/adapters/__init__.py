@@ -23,7 +23,8 @@ _inside = contextvars.ContextVar("deja_inside_io", default=False)  # suppress ne
 KNOWN = ("asyncpg", "httpx", "redis", "anyio")
 EXECUTOR_OP = "executor"  # loop.run_in_executor, recorded by the loop itself
 OPTIONAL_OPS = {"pg.prepare"}  # may be skipped by a client-side cache (SQLAlchemy's statement cache); see replay
-OUTSIDE_LIMIT = 500  # distinct out-of-request calls (startup queries) whose first result is kept for replay
+OUTSIDE_LIMIT = 500  # distinct out-of-request calls (startup queries) whose results are kept for replay
+OUTSIDE_PER_CALL = 20  # results kept per distinct call, in order (the same query run once per pool connection)
 OUTSIDE_MAX_ROWS = 200
 _lock = threading.Lock()
 _installed: dict[str, int] = {}
@@ -97,22 +98,23 @@ async def io_call(op: str, key, real, *, encode=codec.encode, decode=codec.decod
 
 
 async def _outside(rec, op, key, real, encode):
-    """Out-of-request call while recording: run it live, and keep the first result of each distinct call so replay
-    can answer startup work (an ORM reading the server version, CREATE TABLE IF NOT EXISTS) without a database."""
+    """Out-of-request call while recording: run it live, and keep the results of each distinct call, in order, so
+    replay can answer startup work (an ORM reading the server version, CREATE TABLE IF NOT EXISTS, a query each pool
+    connection runs) without a database."""
     out = rec.catalog.setdefault("outside", {})
-    if len(out) >= OUTSIDE_LIMIT:
-        return await real()
     d = f"{op}:{digest(key)}"
-    if d in out:
+    seen = out.get(d)
+    if (seen is None and len(out) >= OUTSIDE_LIMIT) or (seen is not None and len(seen) >= OUTSIDE_PER_CALL):
         return await real()
+    seen = out.setdefault(d, [])
     try:  # no _inside here: the call may run request handling inline (an ASGI test client) or spawn tasks
         result = await real()
     except BaseException as exc:
-        out[d] = ("err", codec.encode_exc(exc))
+        seen.append(("err", codec.encode_exc(exc)))
         raise
     if not (isinstance(result, list) and len(result) > OUTSIDE_MAX_ROWS):
         try:
-            out[d] = ("ok", encode(result))
+            seen.append(("ok", encode(result)))
         except Exception:
             pass
     return result

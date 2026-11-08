@@ -41,6 +41,7 @@ h2::after{content:"";flex:1;height:1px;background:var(--line)}
 .story::before{content:"";background:var(--red)} .story.clean::before{background:var(--lime)}
 .story .in{padding:16px 18px 16px 0} .kicker{font:700 11px/1 var(--display);letter-spacing:.2em;text-transform:uppercase;color:var(--red)}
 .story.clean .kicker{color:var(--lime)}
+.cpick{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px} .cpick .btn.on{border-color:var(--red);color:var(--red)}
 .story p{margin:10px 0 0;font:500 clamp(15px,1.6vw,18px)/1.6 var(--display);max-width:95ch}
 .grid2{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;align-items:start}
 .moments{list-style:none;margin:0;padding:0;counter-reset:m;border:1px solid var(--line);background:var(--panel)}
@@ -93,7 +94,8 @@ tbody tr{cursor:pointer} tbody tr:hover td{background:var(--panel-2)} tbody tr.s
   <div class="pill" id="pill"></div>
 </div></header>
 <main class="wrap">
-  <section class="story" id="story"><div class="in"><div class="kicker" id="kicker"></div><p id="storytext"></p></div></section>
+  <section class="story" id="story"><div class="in"><div class="kicker" id="kicker"></div><p id="storytext"></p>
+    <nav class="cpick" id="cpick" hidden aria-label="Conflicts in this recording"></nav></div></section>
 
   <h2>Key moments</h2>
   <div class="grid2">
@@ -153,11 +155,12 @@ const pill = $("pill");
 if (D.replay) { pill.textContent = D.replay.matched + " / " + D.replay.times + " replays matched";
   pill.className = "pill " + (D.replay.matched === D.replay.times ? "ok" : "bad"); }
 else { pill.textContent = "not replayed in this report"; pill.className = "pill none"; }
-const C0 = D.conflicts[0];
+let C0 = D.conflicts[0];
 const PAT = {"lost-update": "Lost update", "check-then-act": "Check-then-act race", "stale-read": "Stale read"};
 $("kicker").textContent = C0 ? (C0.confidence === "possible" ? "Possible " + PAT[C0.pattern].toLowerCase() : PAT[C0.pattern]) + " on " + L(C0.resource) : "No race found between requests";
 if (!C0) $("story").classList.add("clean");
 $("storytext").textContent = D.story;
+const kick = c => (c.confidence === "possible" ? "Possible " + PAT[c.pattern].toLowerCase() : PAT[c.pattern]) + " on " + L(c.resource);
 $("verdict").textContent = D.replay ? D.replay.summary :
   "Not replayed here. Reproduce it with:  deja replay " + D.source + " --app your.module:create_app --times 100";
 
@@ -179,7 +182,7 @@ const IOS = D.ios.map(io => {
 });
 const TOUCH = D.touches.map(t => ({...t, type: "touch"}));
 const STEPS = D.steps.map(s => ({...s, type: "step"}));
-const MOMENTS = D.moments;
+let MOMENTS = D.moments;
 
 // ---------------------------------------------------------------- canvas
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -350,9 +353,23 @@ function select(it) {
 
 // ---------------------------------------------------------------- moments + play
 const ol = $("moments");
-if (!MOMENTS.length) { ol.innerHTML = '<li style="cursor:default">No key moments: Déjà did not find two requests reading and writing the same thing out of order.</li>'; $("mnote").hidden = true; }
-else ol.innerHTML = MOMENTS.map((m, i) => '<li class="' + (m.warning ? "warn" : "") + '" data-i="' + (i + 1) + '" tabindex="0"><span>' + esc(m.text) +
-  (m.warning ? '<span class="w">' + esc(m.warning) + '</span>' : '') + '</span></li>').join("");
+function renderMoments() {
+  if (!MOMENTS.length) { ol.innerHTML = '<li style="cursor:default">No key moments: Déjà did not find two requests reading and writing the same thing out of order.</li>'; $("mnote").hidden = true; }
+  else ol.innerHTML = MOMENTS.map((m, i) => '<li class="' + (m.warning ? "warn" : "") + '" data-i="' + (i + 1) + '" tabindex="0"><span>' + esc(m.text) +
+    (m.warning ? '<span class="w">' + esc(m.warning) + '</span>' : '') + '</span></li>').join("");
+  $("step").max = MOMENTS.length;
+}
+renderMoments();
+// several conflicts: a button per conflict switches the story, the key moments and the highlighted race
+if (D.conflicts.length > 1) {
+  const pick = $("cpick"); pick.hidden = false;
+  pick.innerHTML = D.conflicts.map((c, i) => '<button class="btn' + (i ? '' : ' on') + '" data-c="' + i + '">' + (i + 1) + ". " + esc(kick(c)) + '</button>').join("");
+  pick.onclick = e => { const b = e.target.closest("button[data-c]"); if (!b) return; const i = +b.dataset.c;
+    pick.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+    C0 = D.conflicts[i]; MOMENTS = C0.moments || [];
+    $("kicker").textContent = kick(C0); $("storytext").textContent = i ? C0.story : D.story;
+    renderMoments(); goMoment(0); };
+}
 function goMoment(n) { cursor = n; $("step").value = n; $("pos").textContent = MOMENTS.length ? "moment " + n + " / " + MOMENTS.length : "";
   ol.querySelectorAll("li").forEach(li => li.classList.toggle("on", +li.dataset.i === n));
   if (n) { const m = MOMENTS[n - 1]; focusOn(m.t);

@@ -11,7 +11,7 @@ Recording (M1):
     deja.track(store, "wallet")           # show reads/writes of in-memory state in the report
 """
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 
 from .annotate import labels, touch  # noqa: E402
 from .asgi import DejaMiddleware, flag  # noqa: E402

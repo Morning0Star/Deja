@@ -30,6 +30,7 @@ import abc
 import dis
 import gc
 import inspect
+import logging
 import os
 import sys
 import sysconfig
@@ -41,6 +42,7 @@ import importlib
 _track = importlib.import_module("deja.track")  # (`from . import track` is the deja.track function)
 from .track import COPIES, TRACKED, copy_of, track_object
 
+log = logging.getLogger("deja")
 PLAIN = COPIES  # exact types that get a tracked copy
 MAX_FUNCTIONS = 2000
 SCALARS = (int, float, complex, str, bytes, bool, type(None), tuple, frozenset)
@@ -389,6 +391,9 @@ def _monitor(reach):
             mon.register_callback(tid, mon.events.PY_RETURN, _on_return)
             break
         if _tool is None:
+            log.warning("deja: every sys.monitoring tool slot is taken (a debugger, coverage or a profiler?); "
+                        "module variables %s are not tracked", ", ".join(sorted(
+                            label for t in targets.values() for label in t.values())))
             return []
     for fn in reach.functions:
         g = fn.__globals__
@@ -424,4 +429,5 @@ def auto_track(app) -> list:
         done += _monitor(reach)
         return done
     except Exception:  # never let the report's helper break the app
+        log.warning("deja: automatic tracking failed; in-memory state needs deja.track()", exc_info=True)
         return []

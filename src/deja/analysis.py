@@ -275,6 +275,9 @@ def analyze(header: dict, events: list) -> dict:
         c["names"] = {r: names.get(r, r) for r in (c["a"], c["b"])}
     story = _story(conflicts, requests, names, header, labels)
     moments = _moments(conflicts, touches, names, labels, requests)
+    for c in conflicts:  # every conflict explains itself; the top-level story and moments are the first one's
+        c["story"] = _story([c], requests, names, {}, labels)
+        c["moments"] = _moments([c], touches, names, labels, requests)
     return {
         "requests": [requests[k] for k in sorted(requests)],
         "steps": steps, "ios": [{k: v for k, v in io.items() if k != "raw"} for io in ios],

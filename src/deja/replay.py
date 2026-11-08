@@ -146,6 +146,7 @@ class ReplayRecorder(Recorder):
         self._io = {k: collections.deque(v) for k, v in schedule.io.items()}
         self.listeners: dict[int, tuple] = {}  # listener id -> (connection, channel, callback), see adapters.asyncpg
         self.ended: dict[int, tuple] = {}  # rid -> (status, body) as the middleware reported it (WebSockets)
+        self._outside_n: dict = {}  # out-of-request calls answered so far, per call
         # worker threads (deja.threads): how many tracked accesses each thread call has reached / been let through
         self._gate = threading.Condition()
         self._arrived: collections.Counter = collections.Counter()
@@ -227,8 +228,16 @@ class ReplayRecorder(Recorder):
 
 
     def outside(self, op, digest):
-        """Recorded first result of an out-of-request call (see adapters._outside), or None."""
-        return (self.schedule.header.get("catalog") or {}).get("outside", {}).get(f"{op}:{digest}")
+        """The recorded result of an out-of-request call (see adapters._outside): the n-th call gets the n-th result
+        (the last one once they run out), or None."""
+        got = (self.schedule.header.get("catalog") or {}).get("outside", {}).get(f"{op}:{digest}")
+        if not got:
+            return None
+        if isinstance(got[0], str):  # recordings before 0.0.2 kept one ("ok" | "err", value) per call
+            return got
+        n = self._outside_n.get((op, digest), 0)
+        self._outside_n[(op, digest)] = n + 1
+        return got[min(n, len(got) - 1)]
 
     async def _suspend_once(self):
         loop = asyncio.get_running_loop()
@@ -286,6 +295,7 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
         self._last_progress = _real_monotonic()
         self.done = asyncio.Event()
         self._env_streak = 0
+        self.code_changed: list = []  # app modules whose source differs from the recording's
 
     def time(self):
         return self.vt
@@ -615,6 +625,7 @@ class ReplayResult:
         self.extra_steps = list(loop.extra)
         self.read_misses = list(loop.deja.read_misses)
         self.io_misses = list(loop.deja.io_misses)
+        self.code_changed = list(loop.code_changed)
 
     @property
     def followed(self) -> bool:
@@ -627,6 +638,9 @@ class ReplayResult:
     def summary(self) -> str:
         lines = [f"followed {self.steps_followed}/{self.steps_expected} recorded steps"
                  + (f", {len(self.extra_steps)} extra" if self.extra_steps else "")]
+        if self.code_changed:
+            lines.append("NOTE: the app's code differs from the recording in " + ", ".join(self.code_changed[:8])
+                         + (" and more" if len(self.code_changed) > 8 else ""))
         if self.divergence:
             lines.append("DIVERGED: " + self.divergence)
         for m in self.io_misses[:5]:
@@ -660,6 +674,10 @@ def replay(recording, app_factory, deadline_s: float = 10.0, track: bool = True)
 
     async def drive():
         await harness.startup()
+        from .source import changed, fingerprint
+
+        recorded = (schedule.header.get("catalog") or {}).get("source") or {}
+        loop.code_changed = changed(recorded, fingerprint(app)) if recorded else []
         if track:  # as the middleware does on the first request: worker threads are ordered by tracked accesses
             from .autotrack import auto_track
 

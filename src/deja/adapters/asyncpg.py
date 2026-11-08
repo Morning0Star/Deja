@@ -38,7 +38,7 @@ from asyncpg import types as pgtypes
 from asyncpg import utils as pgutils
 
 from .. import codec
-from . import OUTSIDE_LIMIT, _context, _get_loop, digest, io_call, passthrough, patch, replaying
+from . import OUTSIDE_LIMIT, OUTSIDE_PER_CALL, _context, _get_loop, digest, io_call, passthrough, patch, replaying
 
 QUERY_METHODS = ("execute", "executemany", "fetch", "fetchrow", "fetchval", "fetchmany")
 STMT_METHODS = ("fetch", "fetchrow", "fetchval", "fetchmany", "executemany")
@@ -155,7 +155,9 @@ async def _outside_stmt(rec, stmt, name, key, real):
     result = await io_call(f"pg.{name}", key, real)
     out = rec.catalog.get("outside")
     if out is not None and len(out) < OUTSIDE_LIMIT:
-        out.setdefault(f"pg.status:{digest(key)}", ("ok", stmt.get_statusmsg()))
+        seq = out.setdefault(f"pg.status:{digest(key)}", [])
+        if len(seq) < OUTSIDE_PER_CALL:
+            seq.append(("ok", stmt.get_statusmsg()))
     return result
 
 
