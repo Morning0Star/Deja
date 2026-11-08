@@ -19,7 +19,11 @@ Replay: ``asyncpg.create_pool`` and ``asyncpg.connect`` return fakes that answer
 is needed. Out-of-request calls on the fakes (startup work such as an ORM reading the server version) are answered
 from the recording's catalog when it has them, else with empty defaults.
 
-Not covered: LISTEN/NOTIFY listeners and log listeners (accepted and ignored on replay).
+LISTEN/NOTIFY: each callback given to ``add_listener`` is wrapped so the recording notes when a notification reached
+it (channel, payload, and the listener's registration number). The replayed app registers its listeners on fake
+connections in the same order, and replay calls them with the recorded payload at the recorded point.
+
+Not covered: log listeners and termination listeners (accepted and ignored on replay).
 """
 
 import inspect
@@ -31,6 +35,7 @@ import asyncpg.pool
 import asyncpg.prepared_stmt
 import asyncpg.transaction
 from asyncpg import types as pgtypes
+from asyncpg import utils as pgutils
 
 from .. import codec
 from . import OUTSIDE_LIMIT, _context, _get_loop, digest, io_call, passthrough, patch, replaying
@@ -237,6 +242,38 @@ def _wrap_copy(name):
     return make
 
 
+_listener_wrappers: dict = {}  # (id(connection), channel, callback) -> the wrapper registered with asyncpg
+
+
+def _wrap_add_listener(original):
+    async def add_listener(self, channel, callback):
+        rec = getattr(_get_loop(), "deja", None)
+        if rec is None or replaying():
+            return await original(self, channel, callback)
+        lid = rec.next_listener()
+        if inspect.iscoroutinefunction(callback):
+            async def wrapper(con, pid, ch, payload):
+                rec.notify(lid, pid, ch, payload)
+                return await callback(con, pid, ch, payload)
+        else:
+            def wrapper(con, pid, ch, payload):
+                rec.notify(lid, pid, ch, payload)
+                return callback(con, pid, ch, payload)
+        _listener_wrappers[(id(self), channel, callback)] = wrapper
+        return await original(self, channel, wrapper)
+
+    add_listener.__wrapped__ = original
+    return add_listener
+
+
+def _wrap_remove_listener(original):
+    async def remove_listener(self, channel, callback):
+        return await original(self, channel, _listener_wrappers.pop((id(self), channel, callback), callback))
+
+    remove_listener.__wrapped__ = original
+    return remove_listener
+
+
 # ---------------------------------------------------------------------- fakes for replay
 async def _fake_query(name, query, args):
     return await io_call(f"pg.{name}", _stmt_key(name, query, args), None, default=DEFAULTS[name])
@@ -343,6 +380,7 @@ class FakeCursor:
 
 class FakeConnection:
     def __init__(self):
+        self._channels = set()
         for name in QUERY_METHODS:
             setattr(self, name, self._method(name))
         for name in COPY_METHODS:
@@ -406,11 +444,23 @@ class FakeConnection:
     async def reload_schema_state(self):
         pass
 
-    async def add_listener(self, *args, **kwargs):
-        pass
+    async def add_listener(self, channel, callback):
+        if channel not in self._channels:  # the real connection sends LISTEN once per channel
+            self._channels.add(channel)
+            await _fake_query("fetch", f"LISTEN {pgutils._quote_ident(channel)}", ())
+        rec = getattr(_get_loop(), "deja", None)
+        if rec is not None and hasattr(rec, "listeners"):
+            rec.listeners[rec.next_listener()] = (self, channel, callback)
 
-    async def remove_listener(self, *args, **kwargs):
-        pass
+    async def remove_listener(self, channel, callback):
+        rec = getattr(_get_loop(), "deja", None)
+        listeners = getattr(rec, "listeners", {})
+        for lid, (conn, ch, cb) in list(listeners.items()):
+            if conn is self and ch == channel and cb == callback:
+                del listeners[lid]
+        if channel in self._channels and not any(c is self and ch == channel for c, ch, _ in listeners.values()):
+            self._channels.discard(channel)
+            await _fake_query("fetch", f"UNLISTEN {pgutils._quote_ident(channel)}", ())
 
     def add_log_listener(self, *args, **kwargs):
         pass
@@ -490,6 +540,8 @@ def install():
         _undo.append(patch(asyncpg.transaction.Transaction, name, _wrap_simple(f"pg.tx.{name}")))
     _undo.append(patch(asyncpg.transaction.Transaction, "__aexit__", _wrap_tx_exit))
     _undo.append(patch(asyncpg.connection.Connection, "prepare", _wrap_prepare))
+    _undo.append(patch(asyncpg.connection.Connection, "add_listener", _wrap_add_listener))
+    _undo.append(patch(asyncpg.connection.Connection, "remove_listener", _wrap_remove_listener))
     stmt = asyncpg.prepared_stmt.PreparedStatement
     for name in STMT_METHODS:
         _undo.append(patch(stmt, name, _wrap_stmt(name)))

@@ -28,6 +28,7 @@ from .recorder import Recorder
 
 _replay_rid: contextvars.ContextVar = contextvars.ContextVar("deja_replay_rid", default=None)
 _real_monotonic = _time.monotonic
+ENV_BURST = 64  # environment handles run in a row before a waiting request step gets its turn
 
 
 class Divergence(Exception):
@@ -101,6 +102,8 @@ class Schedule:
                 self.reads[e[1]].append((e[2], e[3]))
             elif code == ev.RESPONSE:
                 self.responses[e[1]] = (e[2], e[3] if len(e) > 3 else b"")
+            elif code == ev.NOTIFY:
+                entries.append(("notify", tuple(e[1:5])))
         self.entries = [x for x in entries if x is not None]
 
     @classmethod
@@ -109,7 +112,7 @@ class Schedule:
 
     def expected_path(self, i: int) -> str:
         kind, val = self.entries[i]
-        return f"q{val}" if kind == "start" else val
+        return f"q{val}" if kind == "start" else f"notification on {val[2]}" if kind == "notify" else val
 
     def __len__(self):
         return len(self.entries)
@@ -128,6 +131,7 @@ class ReplayRecorder(Recorder):
         self.read_misses: list[tuple] = []
         self.io_misses: list[str] = []
         self._io = {k: collections.deque(v) for k, v in schedule.io.items()}
+        self.listeners: dict[int, tuple] = {}  # listener id -> (connection, channel, callback), see adapters.asyncpg
 
     def request_start(self, method, path, headers, body) -> int:
         rid = _replay_rid.get()
@@ -208,6 +212,7 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
         self.deadline_s = deadline_s
         self._last_progress = _real_monotonic()
         self.done = asyncio.Event()
+        self._env_streak = 0
 
     def time(self):
         return self.vt
@@ -278,10 +283,26 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
                 f"[diag: ready handles {len(self._ready)}, timers {len(self._scheduled)}, "
                 f"executor threads {threads}, queued jobs {queued}, virtual time {self.vt:.3f}]")
 
+    def _deliver(self, lid, pid, channel, payload):
+        """Hand a recorded notification to the listener the replayed app registered in the same order."""
+        import inspect
+
+        listeners = self.deja.listeners
+        entry = listeners.get(lid) or next((x for x in listeners.values() if x[1] == channel), None)
+        if entry is None:
+            self.deja.io_misses.append(f"notification on {channel}: no listener was registered during replay")
+            return
+        conn, _, callback = entry
+        if inspect.iscoroutinefunction(callback):
+            self.create_task(callback(conn, pid, channel, payload))
+        else:
+            self.call_soon(callback, conn, pid, channel, payload)
+
     def _run(self, handle, path=None):
         if path is not None:
             self.trace.append(path)
-        self._progress()
+        if path is not None or not self.armed:  # only request steps count as progress once the schedule runs:
+            self._progress()  # environment work that loops forever (a retried cancellation) must still time out
         handle._run()
 
     # ------------------------------------------------------------------ the hook
@@ -290,15 +311,22 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
         while True:
             self._promote_timers()
 
-            # environment first, FIFO
+            # environment first, FIFO; but a burst of environment work (anyio re-delivering a cancellation every
+            # pass) must not starve the recorded step that is already waiting
+            starved = self.armed and self._env_streak >= ENV_BURST
             for i, h in enumerate(ready):
+                if starved:
+                    break
                 if h._cancelled:
                     del ready[i]
                     return
                 path = self._path_of(h)
                 if not self.armed or not self._controlled(path):
                     del ready[i]
+                    self._env_streak += 1
                     self._run(h)
+                    if self.armed:
+                        self._check_deadline()
                     return
 
             if not self.armed:  # startup: behave like a normal loop on the virtual clock
@@ -330,6 +358,11 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
                 return
 
             kind, val = sched.entries[self.pos]
+            if kind == "notify":
+                self.pos += 1
+                self._deliver(*val)
+                self._progress()
+                continue
             want = f"q{val}" if kind == "start" else val
             if kind == "start" and not self.harness.started(val):
                 self.harness.start(val)
@@ -339,8 +372,12 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
                 if self._path_of(h) == want:
                     del ready[i]
                     self.pos += 1
+                    self._env_streak = 0
                     self._run(h, want)
                     return
+            if starved:  # the step isn't ready after all: let the environment work run again
+                self._env_streak = 0
+                continue
 
             # expected task not ready yet
             before = len(ready)
@@ -385,13 +422,15 @@ class ASGIHarness:
         }
         sent = False
         status, out = None, []
+        complete = asyncio.Event()
 
         async def receive():
             nonlocal sent
             if not sent:
                 sent = True
                 return {"type": "http.request", "body": body or b"", "more_body": False}
-            await asyncio.get_running_loop().create_future()  # the client never disconnects
+            await complete.wait()  # like uvicorn and httpx: the client goes away once the response is complete
+            return {"type": "http.disconnect"}
 
         async def send(message):
             nonlocal status
@@ -399,6 +438,8 @@ class ASGIHarness:
                 status = message["status"]
             elif message["type"] == "http.response.body":
                 out.append(message.get("body", b""))
+                if not message.get("more_body", False):
+                    complete.set()
 
         try:
             await self.app(scope, receive, send)

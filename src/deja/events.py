@@ -16,6 +16,7 @@
 | ``O`` | task path, op, args digest, "ok"/"err", encoded result | that I/O call finished |
 | ``T`` | task path, resource, "read"/"write", value | app-reported access to in-memory state (``deja.touch``) |
 | ``M`` | label | a marker placed by ``Recorder.mark()`` (e.g. the start of a test trial) |
+| ``L`` | listener id, pid, channel, payload | a Postgres notification reached an app listener (``add_listener``) |
 
 In the in-memory ring buffer a step is stored as a bare ``int`` (the owner's ``id()``) or the string ``"P"``, to keep
 the hot path cheap; ``Recorder.events()`` resolves them into ``("S", path)`` / ``("P",)`` tuples.
@@ -35,3 +36,4 @@ TOUCH = "T"
 MARK = "M"
 IO_START = "I"
 IO_END = "O"
+NOTIFY = "L"

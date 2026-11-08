@@ -1,14 +1,19 @@
 """httpx adapter: wraps ``AsyncClient.send`` (every request goes through it).
 
-Recording stores status, headers and body of non-streaming responses; replay builds an ``httpx.Response`` from them
-without opening a connection. Streaming requests (``stream=True``) run live and are not recorded yet.
+Recording stores status, headers and body of each response; replay builds an ``httpx.Response`` from them without
+opening a connection.
+
+Streaming requests (``client.stream(...)``, ``send(stream=True)``; how LLM SDKs read token streams) are recorded
+chunk by chunk: the response head is one I/O call, and every chunk the app reads from the body is another. Replay
+hands the same chunks back in the same order, suspending where the recorded read suspended, so an app that does work
+between chunks interleaves with other requests exactly as it did.
 """
 
 import base64
 
 import httpx
 
-from . import io_call, passthrough, patch
+from . import _context, io_call, passthrough, patch, replaying
 
 _undo = []
 
@@ -31,15 +36,70 @@ def _decode(v):
     )
 
 
+def _encode_head(resp):
+    return {"__t": "httpx", "status": resp.status_code, "headers": [[k, v] for k, v in resp.headers.multi_items()],
+            "stream": True, "method": resp.request.method, "url": str(resp.request.url)}
+
+
+def _decode_head(v):
+    return httpx.Response(v["status"], headers=v["headers"], stream=_ChunkStream(None, v["url"]),
+                          request=httpx.Request(v["method"], v["url"]))
+
+
+class _ChunkStream(httpx.AsyncByteStream):
+    """A response body read one recorded chunk at a time. ``inner`` is the live stream (None during replay)."""
+
+    def __init__(self, inner, url):
+        self._inner, self._url, self._i, self._it = inner, url, 0, None
+
+    async def _next(self):
+        if self._it is None:
+            self._it = self._inner.__aiter__()
+        try:
+            return await self._it.__anext__()
+        except StopAsyncIteration:
+            return None  # end of body
+
+    async def __aiter__(self):
+        while True:
+            if replaying() or _context()[1] is not None:
+                chunk = await io_call("http.chunk", ("http.chunk", self._url, self._i), self._next)
+            elif self._inner is not None:  # recording, outside a request: read live, keep nothing
+                chunk = await self._next()
+            else:
+                chunk = None
+            self._i += 1
+            if chunk is None:
+                return
+            yield chunk
+
+    async def aclose(self):
+        if self._inner is not None and not replaying():
+            await self._inner.aclose()
+
+
+async def _send_stream(client, original, request, args, kwargs, body):
+    resp = await io_call(
+        "http.send", (request.method, str(request.url), body),
+        lambda: original(client, request, *args, stream=True, **kwargs),
+        encode=_encode_head, decode=_decode_head,
+    )
+    if resp is not None and not isinstance(resp.stream, _ChunkStream):
+        resp.stream = _ChunkStream(resp.stream, str(request.url))
+    return resp
+
+
 def install():
     def make(original):
         def send(self, request, *args, stream=False, **kwargs):
-            if stream or passthrough():
+            if passthrough():
                 return original(self, request, *args, stream=stream, **kwargs)
             try:
                 body = request.content
             except Exception:
                 body = None
+            if stream:
+                return _send_stream(self, original, request, args, kwargs, body)
             return io_call(
                 "http.send", (request.method, str(request.url), body),
                 lambda: original(self, request, *args, stream=stream, **kwargs),

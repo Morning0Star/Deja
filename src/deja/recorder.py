@@ -69,6 +69,7 @@ class Recorder:
         self.dumps: list[str] = []
         self.loop = None
         self.catalog: dict = {}  # adapter metadata replay needs (statement columns, startup call results)
+        self._listener_ids = itertools.count()  # LISTEN callbacks, numbered in registration order
 
     # ------------------------------------------------------------------ events
     def _on_task_new(self, path, parent_path, task):
@@ -100,6 +101,13 @@ class Recorder:
         from .codec import encode
 
         self.buffer.append((ev.TOUCH, self.current_path(), str(resource), kind, encode(value), _now()))
+
+    def next_listener(self) -> int:
+        return next(self._listener_ids)
+
+    def notify(self, lid: int, pid, channel: str, payload):
+        """A pushed notification (Postgres NOTIFY) reached app listener ``lid``; replay delivers it at this point."""
+        self.buffer.append((ev.NOTIFY, lid, pid, channel, payload, _now()))
 
     def mark(self, label: str = "") -> tuple:
         """Append a marker; ``dump(path, since=marker)`` saves everything from it on."""
