@@ -106,14 +106,19 @@ def _rule_touches(sql, params):
 REDIS_READ = {"GET", "MGET", "HGET", "HGETALL", "EXISTS", "SMEMBERS", "LRANGE", "ZRANGE", "TTL", "STRLEN"}
 
 
-def call_touches(io: dict) -> list[dict]:
+def call_touches(io: dict, kinds: dict | None = None) -> list[dict]:
     op, d = io["op"], io.get("detail") or {}
     if op.startswith("pg.") and "sql" in d:
         return sql_touches(d["sql"], d.get("params") or [])
     if op == "http.send" and "url" in d:
+        import fnmatch
+
         u = urlsplit(d["url"])
         res = f"{d['method']} {u.netloc}{u.path}"
-        return [{"resource": res, "kind": "read" if d["method"] in ("GET", "HEAD") else "write"}]
+        kind = next((v for k, v in (kinds or {}).items() if fnmatch.fnmatchcase(res, k)), None)
+        if kind == "ignore":
+            return []
+        return [{"resource": res, "kind": kind or ("read" if d["method"] in ("GET", "HEAD") else "write")}]
     if op == "redis.cmd" and d.get("args"):
         cmd, *rest = d["args"]
         if rest:
@@ -221,7 +226,7 @@ def analyze(header: dict, events: list) -> dict:
             io = {"seq": seq, "seq0": start["seq0"], "task": e[1], "req": _root(e[1]), "op": e[2], "t0": start["t0"],
                   "t1": t1, "ok": e[4] == "ok", "result": short(e[5]), "raw": e[5],
                   "detail": e[7] if len(e) > 7 else None}
-            io["touches"] = call_touches(io)
+            io["touches"] = call_touches(io, header.get("call_kinds"))
             ios.append(io)
             try:
                 decoded = codec.decode(e[5])

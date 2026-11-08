@@ -151,6 +151,9 @@ class ReplayRecorder(Recorder):
         self.listeners: dict[int, tuple] = {}  # listener id -> (connection, channel, callback), see adapters.asyncpg
         self.ended: dict[int, tuple] = {}  # rid -> (status, body) as the middleware reported it (WebSockets)
         self._outside_n: dict = {}  # out-of-request calls answered so far, per call
+        self.pubsubs: dict[int, object] = {}  # listener id -> redis PubSub (see adapters.redis)
+        self._ps_queues: dict = collections.defaultdict(list)
+        self._ps_waiters: dict = collections.defaultdict(list)
         # worker threads (deja.threads): how many tracked accesses each thread call has reached / been let through
         self._gate = threading.Condition()
         self._arrived: collections.Counter = collections.Counter()
@@ -159,6 +162,20 @@ class ReplayRecorder(Recorder):
         self._parked: set = set()  # threads waiting for the event loop (anyio.from_thread)
         self._released = False
         self.gate_timeout = 10.0
+
+    async def pubsub_read(self, lid, block, timeout):
+        from .adapters.redis import wait_for_message
+
+        return await wait_for_message(self._ps_queues[lid], self._ps_waiters[lid], block, timeout)
+
+    def pubsub_push(self, lid, message):
+        waiters = self._ps_waiters[lid]
+        while waiters and waiters[0].done():
+            waiters.pop(0)
+        if waiters:
+            waiters.pop(0).set_result(message)
+        else:
+            self._ps_queues[lid].append(message)
 
     # ------------------------------------------------------------------ worker threads
     def thread_gate(self, path):
@@ -389,16 +406,31 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
         """Hand a recorded notification to the listener the replayed app registered in the same order."""
         import inspect
 
+        if pid == "redis":  # a pub/sub message for a background listener (adapters.redis)
+            from . import codec
+
+            self.deja.pubsub_push(lid, codec.decode(payload))
+            return
+
         listeners = self.deja.listeners
-        entry = listeners.get(lid) or next((x for x in listeners.values() if x[1] == channel), None)
+        entry = listeners.get(lid) or (next((x for x in listeners.values() if x[1] == channel), None)
+                                        if pid not in ("log", "term") else None)
         if entry is None:
             self.deja.io_misses.append(f"notification on {channel}: no listener was registered during replay")
             return
         conn, _, callback = entry
-        if inspect.iscoroutinefunction(callback):
-            self.create_task(callback(conn, pid, channel, payload))
+        if pid == "log":  # a server log message (asyncpg add_log_listener)
+            from .adapters.asyncpg import LogMessage
+
+            args = (conn, LogMessage(payload))
+        elif pid == "term":  # the connection closed (add_termination_listener)
+            args = (conn,)
         else:
-            self.call_soon(callback, conn, pid, channel, payload)
+            args = (conn, pid, channel, payload)
+        if inspect.iscoroutinefunction(callback):
+            self.create_task(callback(*args))
+        else:
+            self.call_soon(callback, *args)
 
     def _run(self, handle, path=None):
         if path is not None:

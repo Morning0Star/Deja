@@ -10,7 +10,7 @@ Both are no-ops outside a recording loop. Neither is needed for record or replay
 
 import asyncio
 
-from .recorder import LABELS
+from .recorder import CALL_KINDS, LABELS
 from .threads import _thread
 
 
@@ -48,3 +48,18 @@ def _gate() -> bool:
 
 def labels(mapping: dict) -> None:
     LABELS.update({str(k): str(v) for k, v in mapping.items()})
+
+
+def calls(mapping: dict) -> None:
+    """Say what an outside HTTP call does to shared state, when its method doesn't:
+
+        deja.calls({"POST pricing.internal/quote": "read",     # a POST that only computes a price
+                    "GET payments.example/*/capture": "write",  # a GET that changes something
+                    "GET metrics.internal/*": "ignore"})        # not part of the story
+
+    Keys are ``"METHOD host/path"`` with ``fnmatch`` wildcards. By default GET and HEAD read, everything else writes.
+    """
+    for k, v in mapping.items():
+        if v not in ("read", "write", "ignore"):
+            raise ValueError(f'deja.calls: {k!r} must map to "read", "write" or "ignore", not {v!r}')
+        CALL_KINDS[str(k)] = v

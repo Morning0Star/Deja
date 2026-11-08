@@ -62,3 +62,79 @@ def test_double_booking_inside_transactions_is_found_and_replays_without_the_dat
     assert c["confidence"] == "certain"
     r = replay(path, booking_app(DEAD_PORT_DSN), deadline_s=5)
     assert r.followed and r.same_responses, r.summary()
+
+
+def notice_app(dsn):
+    """A request runs a statement that raises NOTICEs; a log listener collects them; another request reads them."""
+    def factory():
+        state = {"notes": []}
+
+        @contextlib.asynccontextmanager
+        async def lifespan(app):
+            state["conn"] = await asyncpg.connect(dsn)
+            state["conn"].add_log_listener(lambda conn, msg: state["notes"].append(f"{msg.severity}: {msg.message}"))
+            yield
+            await state["conn"].close()
+
+        app = FastAPI(lifespan=lifespan)
+
+        @app.post("/migrate")
+        async def migrate():
+            await state["conn"].execute("DO $$ BEGIN RAISE NOTICE 'step %', 1; RAISE WARNING 'careful'; END $$")
+            return {}
+
+        @app.get("/notes")
+        async def notes():
+            await asyncio.sleep(0.05)
+            return {"notes": list(state["notes"])}
+
+        return app
+
+    return factory
+
+
+def test_server_log_messages_replay_without_the_database(tmp_path):
+    path, responses = record_concurrently(notice_app(PG_DSN), [("POST", "/migrate"), ("GET", "/notes")],
+                                          str(tmp_path / "notice.deja"))
+    assert responses[1].json()["notes"] == ["NOTICE: step 1", "WARNING: careful"]
+    r = replay(path, notice_app(DEAD_PORT_DSN), deadline_s=5)
+    assert r.followed and r.same_responses, r.summary()
+
+
+def kill_app(dsn):
+    def factory():
+        state = {"closed": False}
+
+        @contextlib.asynccontextmanager
+        async def lifespan(app):
+            state["conn"], state["admin"] = await asyncpg.connect(dsn), await asyncpg.connect(dsn)
+            state["conn"].add_termination_listener(lambda conn: state.update(closed=True))
+            yield
+            await state["admin"].close()
+
+        app = FastAPI(lifespan=lifespan)
+
+        @app.post("/kill")
+        async def kill():
+            await state["admin"].execute("SELECT pg_terminate_backend($1)", state["conn"].get_server_pid())
+            return {}
+
+        @app.get("/closed")
+        async def closed():
+            for _ in range(100):
+                if state["closed"]:
+                    return {"closed": True}
+                await asyncio.sleep(0.01)
+            return {"closed": False}
+
+        return app
+
+    return factory
+
+
+def test_termination_listener_replays_without_the_database(tmp_path):
+    path, responses = record_concurrently(kill_app(PG_DSN), [("POST", "/kill"), ("GET", "/closed")],
+                                          str(tmp_path / "kill.deja"))
+    assert responses[1].json() == {"closed": True}
+    r = replay(path, kill_app(DEAD_PORT_DSN), deadline_s=5)
+    assert r.followed and r.same_responses, r.summary()

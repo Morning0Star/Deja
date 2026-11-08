@@ -23,6 +23,7 @@ DEFAULT_MAX_EVENTS = 200_000  # ~15-20k requests of history for a typical API; m
 
 
 LABELS: dict[str, str] = {}  # friendly names for routes, resources and calls (deja.labels)
+CALL_KINDS: dict[str, str] = {}  # "METHOD host/path" pattern -> "read" | "write" | "ignore" (deja.calls)
 
 
 def _detail(op, key):
@@ -242,6 +243,7 @@ class Recorder:
             "started_at": self.started_at,
             "events_capacity": self.buffer.maxlen,
             "labels": dict(LABELS),
+            "call_kinds": dict(CALL_KINDS),
             "clock": "perf_counter_ns",
             "catalog": {k: dict(v) for k, v in self.catalog.items()},
         }

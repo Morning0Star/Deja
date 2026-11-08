@@ -267,24 +267,34 @@ def _subquery(node, sc, project=None):
     None when that can't be worked out (a join or a set operation inside, nothing known). Only *matches* are
     conclusive: rows the recording doesn't know of could match too, so "none matched" decides nothing."""
     sel = node.this if isinstance(node, exp.Subquery) else node
-    if not isinstance(sel, exp.Select) or sel.args.get("joins") or sc.others is None:
+    if not isinstance(sel, exp.Select) or sc.others is None:
         return None
     src = sel.args.get("from_") or sel.args.get("from")
-    table = src.this if src is not None else None
-    if not isinstance(table, exp.Table):
+    tables = [(src.this if src is not None else None, None)]
+    for j in sel.args.get("joins") or []:  # inner joins: every ON condition must hold for a combination
+        if j.args.get("side") or j.args.get("kind") not in (None, "", "INNER", "CROSS"):
+            return None  # outer joins keep unmatched rows: not evaluated
+        tables.append((j.this, j.args.get("on")))
+    if not all(isinstance(t, exp.Table) for t, _ in tables):
         return None
-    name = _name(table)
     where = sel.args.get("where")
+    conds = [on for _, on in tables if on is not None] + ([where.this] if where is not None else [])
+    combos = [sc]
+    for t, _ in tables:  # every combination of known rows of the joined tables (capped)
+        name = _name(t)
+        rows = sc.others(name) or []
+        combos = [s.inner({name, t.alias_or_name}, row) for s in combos for row in rows][:MAX_COMBOS]
     matched, values = 0, []
-    for row in sc.others(name) or []:
-        inner = sc.inner({name, table.alias_or_name}, row)
-        truth = True if where is None else _eval(where.this, inner)
-        if truth:
+    for inner in combos:
+        if all(_eval(c, inner) for c in conds):
             matched += 1
             if project is not None:
                 k, v = _value(project, inner)
                 values.append(v if k else _MISSING)
     return matched, values
+
+
+MAX_COMBOS = 5000
 
 
 def _eval(node, sc):
@@ -428,6 +438,17 @@ def touches(sql: str, params: list):
                         out[-1]["column"] = sel.expressions[0].name  # fetchval-style scalar: its value is this column
                     if not precise and where is not None:
                         out[-1]["_match"] = _matcher(where, names, params)
+
+    for f in tree.find_all(exp.Anonymous):
+        fname = str(f.name).lower()
+        if fname.startswith(("pg_advisory", "pg_try_advisory")):
+            keys = [_param(a, params) for a in f.expressions]
+            key = ",".join(str(v) for ok, v in keys if ok) or "?"
+            unlock = "unlock" in fname
+            out.append({"resource": f"advisory lock {key}", "kind": "write", "table": None, "rows": None,
+                        "where": None, "precise": True, "lock": True,
+                        "writes": {"(unlocked)" if unlock else "(locked)": True},
+                        "advisory": "try" if fname.startswith("pg_try") else "unlock" if unlock else "wait"})
 
     if isinstance(tree, exp.Insert):
         target = tree.this.this if isinstance(tree.this, exp.Schema) else tree.this

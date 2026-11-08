@@ -88,3 +88,18 @@ def test_gallery_failures_are_explained(tmp_path, scenario, pattern):
     assert a["conflicts"] and a["conflicts"][0]["pattern"] == pattern
     assert a["moments"] and any(m["warning"] for m in a["moments"])
     assert a["duration_ms"] > 0 and all(r["start"] is not None for r in a["requests"])
+
+
+def test_call_kinds_override_the_http_method():
+    from deja.analysis import call_touches
+
+    io = {"op": "http.send", "detail": {"method": "POST", "url": "http://pricing.internal/quote?x=1", "body": ""}}
+    assert call_touches(io)[0]["kind"] == "write"
+    assert call_touches(io, {"POST pricing.internal/quote": "read"})[0]["kind"] == "read"
+    assert call_touches(io, {"POST pricing.internal/*": "ignore"}) == []
+    import pytest
+
+    import deja
+
+    with pytest.raises(ValueError):
+        deja.calls({"GET x/y": "maybe"})

@@ -214,3 +214,19 @@ def test_writes_in_a_transaction_count_when_it_commits():
     assert c["pattern"] == "check-then-act" and c["resource"] == "bookings[room=5, day=10]"
     # B rolled back: its insert never happened, so no double booking (B still read a value A was changing)
     assert [c["pattern"] for c in analyze({}, events("pg.tx.rollback"))["conflicts"]] == ["stale-read"]
+
+
+def test_advisory_locks_are_named():
+    assert res("SELECT pg_advisory_xact_lock($1)", [42]) == [("write", "advisory lock 42")]
+    assert res("SELECT pg_advisory_unlock(1, 2)") == [("write", "advisory lock 1,2")]
+
+
+def test_subquery_with_a_join_is_checked_against_known_rows():
+    order = codec.encode([codec.FakeRecord(["id", "item_id", "user_id"], [1, 7, 3])])
+    user = codec.encode([codec.FakeRecord(["id", "banned"], [3, True])])
+    seen = list(_io("q1", "SELECT * FROM orders WHERE id = $1", [1], order, 5)) + \
+        list(_io("q1", "SELECT * FROM users WHERE id = $1", [3], user, 6))
+    cond = ("EXISTS (SELECT 1 FROM orders o JOIN users u ON u.id = o.user_id "
+            "WHERE o.item_id = items.id AND u.banned)")
+    [c] = analyze({}, range_vs_row(cond, [], {"id": 7, "qty": 1}, seen))["conflicts"]
+    assert c["confidence"] == "certain"

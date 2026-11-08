@@ -23,7 +23,9 @@ LISTEN/NOTIFY: each callback given to ``add_listener`` is wrapped so the recordi
 it (channel, payload, and the listener's registration number). The replayed app registers its listeners on fake
 connections in the same order, and replay calls them with the recorded payload at the recorded point.
 
-Not covered: log listeners and termination listeners (accepted and ignored on replay).
+Log listeners (server ``NOTICE`` / ``WARNING`` messages, ``add_log_listener``) and termination listeners
+(``add_termination_listener``) are recorded the same way: replay calls them at the recorded point, a log listener
+with a message object carrying the recorded fields (``severity``, ``message``, ``detail``...).
 """
 
 import inspect
@@ -161,6 +163,16 @@ async def _outside_stmt(rec, stmt, name, key, real):
     return result
 
 
+def _wrap_pid(original):
+    def get_server_pid(self):  # apps pass it to pg_terminate_backend / pg_cancel_backend: replay returns the same
+        value = original(self)
+        rec, path = _context()
+        return rec.read("pg.pid", value) if path is not None else value
+
+    get_server_pid.__wrapped__ = original
+    return get_server_pid
+
+
 def _wrap_status(original):
     def get_statusmsg(self):  # "UPDATE 1": SQLAlchemy turns it into rowcount, so replay must return the same
         value = original(self)
@@ -266,6 +278,74 @@ def _wrap_add_listener(original):
 
     add_listener.__wrapped__ = original
     return add_listener
+
+
+def _callback_wrapper(callback, before):
+    """``callback`` (sync or async) preceded by ``before(*args)``."""
+    if inspect.iscoroutinefunction(callback):
+        async def wrapper(*args):
+            before(*args)
+            return await callback(*args)
+    else:
+        def wrapper(*args):
+            before(*args)
+            return callback(*args)
+    return wrapper
+
+
+def _log_fields(message):
+    try:
+        return {k: v for k, v in message.as_dict().items() if isinstance(v, (str, int, type(None)))}
+    except Exception:
+        return {"message": str(message)}
+
+
+def _wrap_add_special(kind):
+    """add_log_listener / add_termination_listener: note when the callback runs (``kind`` is "log" or "term")."""
+    def make(original):
+        def add(self, callback):
+            rec = getattr(_get_loop(), "deja", None)
+            if rec is None or replaying():
+                return original(self, callback)
+            lid = rec.next_listener()
+
+            def note(con, message=None):
+                rec.notify(lid, kind, "", _log_fields(message) if kind == "log" else None)
+
+            wrapper = _callback_wrapper(callback, note)
+            _listener_wrappers[(id(self), kind, callback)] = wrapper
+            return original(self, wrapper)
+
+        add.__wrapped__ = original
+        return add
+
+    return make
+
+
+def _wrap_remove_special(kind):
+    def make(original):
+        def remove(self, callback):
+            return original(self, _listener_wrappers.pop((id(self), kind, callback), callback))
+
+        remove.__wrapped__ = original
+        return remove
+
+    return make
+
+
+class LogMessage:
+    """Stands in for ``asyncpg.PostgresLogMessage`` during replay: the recorded fields as attributes."""
+
+    def __init__(self, fields):
+        self._fields = dict(fields or {})
+        for k, v in self._fields.items():
+            setattr(self, k, v)
+
+    def as_dict(self):
+        return dict(self._fields)
+
+    def __str__(self):
+        return str(self._fields.get("message", ""))
 
 
 def _wrap_remove_listener(original):
@@ -464,20 +544,32 @@ class FakeConnection:
             self._channels.discard(channel)
             await _fake_query("fetch", f"UNLISTEN {pgutils._quote_ident(channel)}", ())
 
-    def add_log_listener(self, *args, **kwargs):
-        pass
+    def _add_special(self, kind, callback):
+        rec = getattr(_get_loop(), "deja", None)
+        if rec is not None and hasattr(rec, "listeners"):
+            rec.listeners[rec.next_listener()] = (self, f"<{kind}>", callback)
 
-    def remove_log_listener(self, *args, **kwargs):
-        pass
+    def _remove_special(self, kind, callback):
+        listeners = getattr(getattr(_get_loop(), "deja", None), "listeners", {})
+        for lid, (conn, ch, cb) in list(listeners.items()):
+            if conn is self and ch == f"<{kind}>" and cb == callback:
+                del listeners[lid]
 
-    def add_termination_listener(self, *args, **kwargs):
-        pass
+    def add_log_listener(self, callback):
+        self._add_special("log", callback)
 
-    def remove_termination_listener(self, *args, **kwargs):
-        pass
+    def remove_log_listener(self, callback):
+        self._remove_special("log", callback)
+
+    def add_termination_listener(self, callback):
+        self._add_special("term", callback)
+
+    def remove_termination_listener(self, callback):
+        self._remove_special("term", callback)
 
     def get_server_pid(self):
-        return 0
+        rec, path = _context()
+        return rec.read("pg.pid", 0) if path is not None else 0
 
     def get_server_version(self):
         return pgtypes.ServerVersion(16, 0, 0, "final", 0)
@@ -543,7 +635,11 @@ def install():
     _undo.append(patch(asyncpg.transaction.Transaction, "__aexit__", _wrap_tx_exit))
     _undo.append(patch(asyncpg.connection.Connection, "prepare", _wrap_prepare))
     _undo.append(patch(asyncpg.connection.Connection, "add_listener", _wrap_add_listener))
+    _undo.append(patch(asyncpg.connection.Connection, "get_server_pid", _wrap_pid))
     _undo.append(patch(asyncpg.connection.Connection, "remove_listener", _wrap_remove_listener))
+    for kind, name in (("log", "log_listener"), ("term", "termination_listener")):
+        _undo.append(patch(asyncpg.connection.Connection, f"add_{name}", _wrap_add_special(kind)))
+        _undo.append(patch(asyncpg.connection.Connection, f"remove_{name}", _wrap_remove_special(kind)))
     stmt = asyncpg.prepared_stmt.PreparedStatement
     for name in STMT_METHODS:
         _undo.append(patch(stmt, name, _wrap_stmt(name)))
