@@ -150,6 +150,7 @@ class ReplayRecorder(Recorder):
         self._io = {k: collections.deque(v) for k, v in schedule.io.items()}
         self.listeners: dict[int, tuple] = {}  # listener id -> (connection, channel, callback), see adapters.asyncpg
         self.ended: dict[int, tuple] = {}  # rid -> (status, body) as the middleware reported it (WebSockets)
+        self.began: set = set()  # requests whose middleware has opened request scope
         self._outside_n: dict = {}  # out-of-request calls answered so far, per call
         self.pubsubs: dict[int, object] = {}  # listener id -> redis PubSub (see adapters.redis)
         self._ps_queues: dict = collections.defaultdict(list)
@@ -236,11 +237,19 @@ class ReplayRecorder(Recorder):
     def request_start(self, method, path, headers, body) -> int:
         rid = _replay_rid.get()
         self.buffer.append((ev.REQUEST, rid, self.current_path(), method, path, [list(h) for h in headers], body))
+        self.began.add(rid)
+        task = asyncio.current_task()
+        if task is not None and rid is not None and self.ids.path(task) != f"q{rid}":
+            # a server that made the task itself (aiohttp): request scope starts here, as it did when recording
+            self._outer[rid] = (task, self.ids.rebind(task, f"q{rid}"))
         return rid
 
     def request_end(self, rid, status, body=b""):
         self.buffer.append((ev.RESPONSE, rid, status, body[:65536], None))
         self.ended[rid] = (status, body[:65536])
+        task, outer = self._outer.pop(rid, (None, None))
+        if task is not None:
+            self.ids.rebind(task, outer)
 
     def forget_request(self, rid):
         pass
@@ -327,6 +336,7 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
         self.done = asyncio.Event()
         self._env_streak = 0
         self.code_changed: list = []  # app modules whose source differs from the recording's
+        self.io_grace = 0.0  # real seconds to wait for socket I/O before jumping the virtual clock
 
     def time(self):
         return self.vt
@@ -381,6 +391,17 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
 
     def _poll(self, timeout):
         self._process_events(self._selector.select(timeout))
+
+    def _jump(self):
+        """Move the virtual clock to the next timer. With real sockets in play (a harness that serves the app on a
+        port), give real I/O a moment first: data in flight on localhost takes real time, and jumping past it would
+        fire the server's own timeouts early."""
+        if self.io_grace:
+            before = len(self._ready)
+            self._poll(self.io_grace)
+            if len(self._ready) != before:
+                return
+        self.vt = max(self.vt, self._scheduled[0]._when)
 
     def _progress(self):
         self._last_progress = _real_monotonic()
@@ -467,7 +488,7 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
                 if ready:
                     continue
                 if self._scheduled:
-                    self.vt = self._scheduled[0]._when
+                    self._jump()
                     continue
                 self._poll(0.01)
                 self._check_deadline()
@@ -485,7 +506,7 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
                     self._run(h, path)
                     return
                 if self._scheduled:
-                    self.vt = self._scheduled[0]._when
+                    self._jump()
                     continue
                 self._poll(0.05)
                 self._check_deadline()
@@ -497,7 +518,7 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
                 if turn is None:  # the thread is waiting for the loop: run the loop (its timers too), then try again
                     self._poll(0)
                     if not ready and self._scheduled:
-                        self.vt = max(self.vt, self._scheduled[0]._when)
+                        self._jump()
                         continue
                     if not ready:
                         self._poll(0.001)
@@ -515,6 +536,20 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
                 self._progress()
                 continue
             want = f"q{val}" if kind == "start" else val
+            if kind == "start" and getattr(self.harness, "starts_in_env", False):
+                # the server makes the request's task (aiohttp): the step that opens request scope is the server's
+                # own, so "start" is done once the middleware has opened it; that step was not a request step
+                if not self.harness.started(val):
+                    self.harness.start(val)
+                    self._progress()
+                    continue
+                if val in self.deja.began:
+                    self.pos += 1
+                    self._progress()
+                    continue
+                self._poll(0.001)
+                self._check_deadline()
+                return
             if kind == "start" and not self.harness.started(val):
                 self.harness.start(val)
                 self._progress()
@@ -536,7 +571,7 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
             if len(ready) != before:
                 continue
             if self._scheduled:
-                self.vt = max(self.vt, self._scheduled[0]._when)
+                self._jump()
                 continue
             self._poll(0.01)
             self._check_deadline()
@@ -734,7 +769,13 @@ def replay(recording, app_factory, deadline_s: float = 10.0, track: bool = True)
     schedule = recording if isinstance(recording, Schedule) else Schedule.load(recording)
     loop = ReplayLoop(schedule, deadline_s=deadline_s)
     app = app_factory()
-    harness = ASGIHarness(loop, app)
+    if type(app).__module__.startswith("aiohttp."):
+        from .aiohttp_web import AiohttpHarness
+
+        harness = AiohttpHarness(loop, app)
+        loop.io_grace = 0.005
+    else:
+        harness = ASGIHarness(loop, app)
     loop.harness = harness
     divergence = None
 
@@ -755,7 +796,10 @@ def replay(recording, app_factory, deadline_s: float = 10.0, track: bool = True)
         # connections still open at the end of the recording stay open: don't wait for those
         pending = [t for rid, t in harness.tasks.items() if not t.done() and rid in schedule.responses]
         if pending:
-            await asyncio.wait(pending, timeout=deadline_s)
+            end = _real_monotonic() + deadline_s  # real time: the clients may wait on real sockets
+            while pending and _real_monotonic() < end:
+                await asyncio.wait(pending, timeout=0.01)
+                pending = [t for t in pending if not t.done()]
         await harness.shutdown()
 
     try:

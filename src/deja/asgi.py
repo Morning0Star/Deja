@@ -211,28 +211,33 @@ class DejaMiddleware:
             rec.forget_request(rid)
 
     def _dump(self, rec, rid, reason):
-        if getattr(rec, "replaying", False):  # replaying a recording must not write new ones
-            return
-        os.makedirs(self.directory, exist_ok=True)
-        stem = os.path.join(self.directory, f"{time.strftime('%Y%m%d-%H%M%S')}-r{rid}")
-        path, n = stem + ".deja", 1
-        while os.path.exists(path) or path in rec.dumps:  # a connection flagged twice in one second
-            path, n = f"{stem}-{n}.deja", n + 1
-        header = rec.header()
-        header["reason"] = reason
-        header["request"] = rid
-        events = rec.window(rid)  # snapshot on the loop thread; the file write happens off it
+        save(rec, rid, reason, self.directory, self.on_dump)
 
-        def write():
-            from .fileformat import write as write_file
 
-            write_file(path, header, events)
-            rec.dumps.append(path)
-            log.warning("deja: saved %s (%s)", path, reason)
-            if self.on_dump:
-                self.on_dump(path, reason)
+def save(rec, rid, reason, directory, on_dump=None):
+    """Write the causal window around request ``rid`` to ``directory`` (the file write happens off the loop)."""
+    if getattr(rec, "replaying", False):  # replaying a recording must not write new ones
+        return
+    os.makedirs(directory, exist_ok=True)
+    stem = os.path.join(directory, f"{time.strftime('%Y%m%d-%H%M%S')}-r{rid}")
+    path, n = stem + ".deja", 1
+    while os.path.exists(path) or path in rec.dumps:  # a connection flagged twice in one second
+        path, n = f"{stem}-{n}.deja", n + 1
+    header = rec.header()
+    header["reason"] = reason
+    header["request"] = rid
+    events = rec.window(rid)  # snapshot on the loop thread; the file write happens off it
 
-        try:
-            asyncio.get_running_loop().run_in_executor(None, write)
-        except RuntimeError:
-            write()
+    def write():
+        from .fileformat import write as write_file
+
+        write_file(path, header, events)
+        rec.dumps.append(path)
+        log.warning("deja: saved %s (%s)", path, reason)
+        if on_dump:
+            on_dump(path, reason)
+
+    try:
+        asyncio.get_running_loop().run_in_executor(None, write)
+    except RuntimeError:
+        write()

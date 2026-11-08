@@ -109,7 +109,8 @@ def _endpoints(app):
         fn = _function(fn)
         if fn is not None:
             out.append(fn)
-    seen, stack = set(), [getattr(app, "routes", None) or getattr(getattr(app, "router", None), "routes", [])]
+    routes = getattr(app, "routes", None) or getattr(getattr(app, "router", None), "routes", [])
+    seen, stack = set(), [routes if isinstance(routes, (list, tuple)) else []]  # (aiohttp's is a method)
     while stack:
         for route in stack.pop() or []:
             sub = getattr(route, "routes", None) or getattr(getattr(route, "app", None), "routes", None)
@@ -134,6 +135,10 @@ def _endpoints(app):
 
 def _other_framework_handlers(app):
     """Handlers of frameworks that don't keep Starlette-style routes."""
+    router = getattr(app, "router", None)
+    if type(app).__module__.startswith("aiohttp.") and router is not None:  # aiohttp web.Application
+        for route in router.routes():
+            yield getattr(route, "handler", None)
     views = getattr(app, "view_functions", None)  # Quart / Flask
     if isinstance(views, dict):
         yield from views.values()
