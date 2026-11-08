@@ -116,6 +116,20 @@ def decode(v):
         return FakeRecord(v["k"], [decode(i) for i in x])
     if t == "repr":
         return x
+    if t == "dbapi":  # a DB-API driver's result (adapters._dbapi), as the report reads it: rows with column names
+        if v.get("rows") is None:
+            return v.get("status")
+        cols = v.get("columns") or []
+        out = []
+        for r in v["rows"]:
+            r = decode(r)
+            if isinstance(r, FakeRecord):
+                out.append(r)
+            elif isinstance(r, dict):
+                out.append(FakeRecord(list(r), list(r.values())))
+            else:
+                out.append(FakeRecord(cols[:len(r)], list(r)))
+        return out
     raise ValueError(f"unknown codec tag {t!r}")
 
 

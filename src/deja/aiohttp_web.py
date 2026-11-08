@@ -96,6 +96,9 @@ class AiohttpHarness:
         self.tasks[rid] = self.loop.create_task(self._send(rid), context=contextvars.Context())
 
     async def _send(self, rid):
+        from .adapters import _inside
+
+        _inside.set(True)  # the harness's own client: never answered from the recording
         _, _, _, method, target, headers, body = self.loop.schedule.requests[rid][:7]
         hdrs = [(k, v) for k, v in headers if k.lower() not in ("host", "content-length", "transfer-encoding")]
         hdrs.append((RID_HEADER, str(rid)))

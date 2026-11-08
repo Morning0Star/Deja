@@ -139,7 +139,7 @@ def _redis_touches(args):
 
 def call_touches(io: dict, kinds: dict | None = None) -> list[dict]:
     op, d = io["op"], io.get("detail") or {}
-    if op.startswith("pg.") and "sql" in d:
+    if op.startswith(("pg.", "sql.")) and "sql" in d:
         return sql_touches(d["sql"], d.get("params") or [])
     if op == "http.send" and "url" in d:
         import fnmatch
@@ -165,7 +165,7 @@ def call_touches(io: dict, kinds: dict | None = None) -> list[dict]:
 # ---------------------------------------------------------------------- helpers
 def short(value, limit=60):
     """One-line human form of an encoded result."""
-    if isinstance(value, dict) and value.get("__t") == "httpx":
+    if isinstance(value, dict) and value.get("__t") in ("httpx", "aiohttp"):
         return f"HTTP {value.get('status')}"
     if isinstance(value, dict) and value.get("__t") == "exc":
         return "raised " + value.get("type", "").split(":")[-1]
@@ -282,7 +282,7 @@ def analyze(header: dict, events: list) -> dict:
                        "req": io["req"], "task": e[1], "op": e[2], "value": value, "_result": decoded,
                        "result": io["result"], "source": "recorded call"}
                 level = iso.get(e[1])
-                if level is not None and e[2].startswith("pg."):
+                if level is not None and e[2].startswith(("pg.", "sql.")):
                     if level["snap"] is None:
                         level["snap"] = (io["seq0"], io["t0"])  # the snapshot: taken by the first statement
                     if tch["kind"] == "read":  # sees the database as of the snapshot, whatever committed since
@@ -294,15 +294,15 @@ def analyze(header: dict, events: list) -> dict:
                     tx[e[1]][-1].append(row)  # inside a transaction: other requests see it once it commits
                 else:
                     touches.append(row)
-            if e[2] == "pg.tx.start" and e[4] == "ok":
+            if e[2].endswith(".tx.start") and e[4] == "ok":
                 if not tx.get(e[1]):
                     level = (io.get("detail") or {}).get("isolation") or "read_committed"
                     if level in ("repeatable_read", "serializable"):
                         iso[e[1]] = {"level": level, "snap": None}
                 tx.setdefault(e[1], []).append([])
-            elif e[2] in ("pg.tx.commit", "pg.tx.rollback") and tx.get(e[1]):
+            elif e[2].endswith((".tx.commit", ".tx.rollback")) and tx.get(e[1]):
                 done = tx[e[1]].pop()
-                if e[2] == "pg.tx.rollback" or e[4] != "ok":
+                if e[2].endswith(".tx.rollback") or e[4] != "ok":
                     pass  # rolled back: those writes never happened
                 elif tx[e[1]]:
                     tx[e[1]][-1].extend(done)  # a savepoint released into the transaction around it

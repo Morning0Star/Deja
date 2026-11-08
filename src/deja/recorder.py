@@ -31,7 +31,7 @@ def _detail(op, key):
     from .codec import encode
 
     try:
-        if op.startswith("pg.") and isinstance(key, tuple) and len(key) == 3:
+        if op.startswith(("pg.", "sql.")) and isinstance(key, tuple) and len(key) == 3:
             _, query, args = key
             return {"sql": str(query)[:4000], "params": [encode(a) for a in list(args)[:50]]}
         if op == "http.send" and isinstance(key, tuple) and len(key) == 3:
