@@ -117,6 +117,36 @@ def cmd_report(a) -> int:
     return 0
 
 
+def cmd_verify(a) -> int:
+    from .replay import Schedule
+    from .verify import verify
+
+    code = _same_hash_seed(Schedule.load(a.recording))
+    if code is not None:
+        return code
+    v = verify(a.recording, _load_factory(a.app), times=a.times, deadline_s=a.deadline)
+    print(v.summary())
+    return 0 if v.fixed else 1
+
+
+def cmd_diff(a) -> int:
+    from .replay import Schedule
+    from .verify import diff
+
+    code = _same_hash_seed(Schedule.load(a.recording))
+    if code is not None:
+        return code
+    print(diff(a.recording, _load_factory(a.app), _load_factory(a.against), deadline_s=a.deadline))
+    return 0
+
+
+def cmd_export_test(a) -> int:
+    from .verify import export_test
+
+    print(export_test(a.recording, a.app, a.out))
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="deja", description="Record and replay asyncio interleavings.")
     p.add_argument("-V", "--version", action="version", version=f"deja {__version__}")
@@ -137,6 +167,23 @@ def main(argv=None) -> int:
     rp.add_argument("--times", type=int, default=20)
     rp.add_argument("--deadline", type=float, default=10.0)
     rp.set_defaults(fn=cmd_report)
+    v = sub.add_parser("verify", help="replay a recorded race against (fixed) code: does it still happen?")
+    v.add_argument("recording")
+    v.add_argument("--app", required=True, help="module:attribute of the code to check")
+    v.add_argument("--times", type=int, default=5)
+    v.add_argument("--deadline", type=float, default=10.0)
+    v.set_defaults(fn=cmd_verify)
+    d = sub.add_parser("diff", help="replay one recording against two versions of an app and compare")
+    d.add_argument("recording")
+    d.add_argument("--app", required=True, help="module:attribute of the old version")
+    d.add_argument("--against", required=True, help="module:attribute of the new version")
+    d.add_argument("--deadline", type=float, default=10.0)
+    d.set_defaults(fn=cmd_diff)
+    x = sub.add_parser("export-test", help="write a pytest regression test for the recorded race")
+    x.add_argument("recording")
+    x.add_argument("--app", required=True, help="module:attribute the test will import")
+    x.add_argument("-o", "--out", required=True, help="the test file to write (the recording is copied beside it)")
+    x.set_defaults(fn=cmd_export_test)
     a = p.parse_args(argv)
     return a.fn(a)
 
