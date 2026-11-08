@@ -169,6 +169,13 @@ Per loop pass (generalised from spike S3):
 | D24 | A WebSocket message, in or out, is one recorded I/O call; the connection is request scope | Replay then needs no client and checks what the app sent; a flag mid-connection saves when the app next waits, so long-lived connections don't have to end first |
 | D25 | Writes inside a database transaction count when it commits; reads of a statement that also writes count when it starts | That is when other requests can see the write, and when a guarded insert's check ran; a rollback drops its writes |
 | D26 | Module variables reassigned with `global` are watched with `sys.monitoring` line events, only on the functions that use them | Names can't be swapped like containers; local events cost nothing elsewhere, and a write is reported on the next line event, after the store |
+| D27 | A value stored in a tracked container is copied (tracked) only when nothing else holds it | Reference count calibrated at import (3.14 borrows references) plus the caller's locals; an alias must never be split. App objects are tracked in place, which is always safe |
+| D28 | Library calls whose internal steps depend on caches run live in replay, outside request scope (`io_live`) | Creating an AWS client loads models and credentials once per process; the request waits for it as one step, so warm or cold caches can't change the interleaving |
+| D29 | A recorded step of a task that already finished in replay is skipped and reported, not a divergence | Executors and transports on some Python versions wake a finished request once more; the app's work is already over |
+| D30 | Background tasks are only the app's own coroutines started during startup, and their I/O stays startup-like until the replay is armed | Library tasks (pool maintenance, Kafka fetchers) would never follow a schedule; a background task's life before the window can only be rebuilt by running it |
+| D31 | Several workers are merged by time (one shared clock per machine) into one recording; replay gives each worker its own app | Workers share the database, not memory |
+| D32 | `deja explore` judges an interleaving against the outcomes of serial orders | An outcome no one-at-a-time order produces can only come from interleaving: a race, without a spec of what is correct |
+| D33 | Recording formats are versioned; reads upgrade older formats and refuse newer ones | Old recordings keep loading; a recording from a newer Déjà never replays wrongly |
 
 ## 5. Testing strategy
 
@@ -249,6 +256,15 @@ Per loop pass (generalised from spike S3):
   `OrderedDict`, `Counter`, `deque` and the remaining mutators; autotrack follows the functions, classes and modules
   the routes use, tracks app objects whose attributes request code assigns, and watches `global` variables (D26).
   Report: connections and messages, worker threads, close codes. 108 tests on 3.12 and 3.14.
+
+- **Coverage and tools** (2026-11-09): Python 3.13 / 3.15 / PyPy 3.12; Litestar, Quart, Django, aiohttp servers;
+  `deja.scope` jobs; background tasks; several workers (`group`, `deja merge`); adapters for psycopg 3, aiomysql,
+  aiosqlite, PyMongo async, aiobotocore / boto3, aiokafka, aiohttp client, requests, sync httpx, grpc.aio; Redis
+  pub/sub and Postgres log / termination listeners; values inside tracked containers, pydantic models, `global`
+  container rebinding, `datetime.now()` and early-bound clock names; analysis of write skew, torn reads, deadlocks,
+  isolation levels, advisory locks, LIKE / functions / subqueries, transactions; `deja verify`, `diff`,
+  `export-test`, `shrink`, `explore`, `step`; source fingerprints, hash seed, tracking rules, format versioning.
+  155 tests (3.14; others skip drivers not installed). CI runs on demand (Actions minutes ran out).
 
 ## 8. Milestones (revised)
 
