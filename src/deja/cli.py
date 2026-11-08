@@ -140,6 +140,14 @@ def cmd_diff(a) -> int:
     return 0
 
 
+def cmd_explore(a) -> int:
+    from .explore import explore, summary
+
+    result = explore(a.recording, _load_factory(a.app), tries=a.tries, seed=a.seed, deadline_s=a.deadline)
+    print(summary(result))
+    return 1 if result["races"] else 0
+
+
 def cmd_shrink(a) -> int:
     from .shrink import shrink
 
@@ -202,6 +210,13 @@ def main(argv=None) -> int:
     d.add_argument("--against", required=True, help="module:attribute of the new version")
     d.add_argument("--deadline", type=float, default=10.0)
     d.set_defaults(fn=cmd_diff)
+    ex = sub.add_parser("explore", help="try other orderings of the recorded requests to find races not yet seen")
+    ex.add_argument("recording")
+    ex.add_argument("--app", required=True)
+    ex.add_argument("--tries", type=int, default=50, help="random interleavings to try")
+    ex.add_argument("--seed", type=int, default=1)
+    ex.add_argument("--deadline", type=float, default=10.0)
+    ex.set_defaults(fn=cmd_explore)
     sh = sub.add_parser("shrink", help="cut a recording down to the requests the race needs")
     sh.add_argument("recording")
     sh.add_argument("--app", required=True, help="module:attribute of the app to replay against")
