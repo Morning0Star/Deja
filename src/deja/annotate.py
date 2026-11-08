@@ -13,15 +13,21 @@ import asyncio
 from .recorder import LABELS
 
 
-def touch(resource: str, kind: str = "read", value=None) -> None:
-    if kind not in ("read", "write"):
-        raise ValueError('kind must be "read" or "write"')
+def _recorder():
+    """The recorder when the current code runs inside a request being recorded, else None."""
     loop = asyncio._get_running_loop()
     rec = getattr(loop, "deja", None) if loop is not None else None
     if rec is None or getattr(rec, "replaying", False):
-        return
+        return None
     path = rec.current_path()
-    if path is not None and path.startswith("q"):
+    return rec if path is not None and path.startswith("q") else None
+
+
+def touch(resource: str, kind: str = "read", value=None) -> None:
+    if kind not in ("read", "write"):
+        raise ValueError('kind must be "read" or "write"')
+    rec = _recorder()
+    if rec is not None:
         rec.touch(resource, kind, value)
 
 

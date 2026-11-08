@@ -159,6 +159,10 @@ Per loop pass (generalised from spike S3):
 | D14 | A range or whole-table query makes a *possible* conflict, ranked below certain ones | `WHERE price > 100` may or may not include the row another request wrote; saying "certain" would be a guess |
 | D15 | Keep a catalog in the recording: column descriptions of prepared statements and the first result of each out-of-request call | An ORM prepares statements before the recorded window and reads the server version at startup; replay needs both without a database |
 | D16 | `prepare` is an optional call in replay | SQLAlchemy caches prepared statements per connection, so the recording and a fresh replay app can differ in whether a statement is prepared; skipping keeps its suspension, extra ones answer at once |
+| D17 | Record a notification when it reaches the app's listener, not when it arrives on the socket | The listener's run is the point the app observes; replay delivers it there to the listener the replayed app registered in the same order |
+| D18 | A streamed httpx body is one I/O call per chunk | Token streams are read with work between chunks; one call for the whole body would hide where requests interleaved and hang on endless streams |
+| D19 | A range touch is resolved per row before conflicts are built | The rows a query returned, or the condition evaluated on recorded column values, decide most rows; only rows the data can't decide stay "possible" |
+| D20 | Auto-track only plain dict / list / set and only when every referrer can be rebound | A tracked copy replaces the object; a reference Déjà can't rebind (a default argument, a tuple, a running coroutine) would split the state in two |
 
 ## 5. Testing strategy
 
@@ -219,6 +223,16 @@ Per loop pass (generalised from spike S3):
   asyncpg adapter now covers prepared statements (SQLAlchemy async ORM), cursors and bulk copy; a SQLAlchemy lost
   update records against Postgres, replays with the database unreachable, and is explained from the SQL the ORM
   generated with no app hints. 66 tests on 3.12 and 3.14.
+
+- **Streams, notifications, ranges, automatic tracking** (2026-11-08): asyncpg LISTEN/NOTIFY records each
+  notification as it reaches a listener (`L` event) and replay delivers it at that point; httpx streams record the
+  head and every chunk; the replay harness sends `http.disconnect` once a response is complete (as uvicorn does), so
+  streamed responses replay; the replay loop no longer lets a burst of environment work (anyio re-delivering a
+  cancellation) starve a recorded step, and such loops now hit the deadline. Range queries are evaluated per row
+  (`sqltouch._eval`: comparisons, `AND` / `OR` / `NOT`, `IN`, `BETWEEN`, `IS NULL`) against the rows the recording
+  shows, and two requests that both found a range empty and both inserted into it are reported as check-then-act on
+  the range. Iterating or `len()` of tracked state is a whole-container read with the keys it saw. The middleware
+  tracks shared state automatically on the first request (`deja.autotrack`). 76 tests on 3.12 and 3.14.
 
 ## 8. Milestones (revised)
 

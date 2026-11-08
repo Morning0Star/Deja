@@ -6,7 +6,9 @@ Returns a list of touches ``{"resource", "kind", "table", "rows", "where", "writ
   ``a = 1 AND b = 2``, ``id IN (1, 2)``, ``id = ANY($1)``); then there is one touch per row
   (``orders[id=7]``) and ``precise`` is True.
 * otherwise the touch is table-level (``items``) with the condition text in ``where`` (``price > 100``) and
-  ``precise`` False: it may cover rows other requests touched, so conflicts built on it are "possible".
+  ``precise`` False. It also carries ``_match(row) -> True | False | None``, which evaluates the condition against
+  known column values of one row (None when they don't decide it). The analysis uses it, and the rows a query
+  returned, to work out which rows a range query covered; what stays undecided gives "possible" conflicts.
 
 Returns None when sqlglot is not installed or cannot parse the statement; callers fall back to simple rules.
 """
@@ -110,6 +112,76 @@ def _rows(where, table_names, params):
     return ([keys] if keys else None), leftover
 
 
+def _value(node, row, tables, params):
+    """(known, value) of an operand for one row: a column of this table, a literal or a parameter."""
+    if isinstance(node, exp.Paren):
+        return _value(node.this, row, tables, params)
+    if isinstance(node, exp.Column):
+        if (node.table and node.table not in tables) or node.name not in row:
+            return False, None
+        return True, row[node.name]
+    return _param(node, params)
+
+
+def _cmp(op, a, b):
+    if a is None or b is None:
+        return False  # SQL: a comparison with NULL is never true
+    try:
+        return op(a, b)
+    except TypeError:
+        return None
+
+
+def _eval(node, row, tables, params):
+    """Truth of a condition for one row: True, False, or None when the known values don't decide it."""
+    import operator as o
+
+    if isinstance(node, exp.Where):
+        node = node.this
+    if isinstance(node, exp.Paren):
+        return _eval(node.this, row, tables, params)
+    if isinstance(node, (exp.And, exp.Or)):
+        a, b = _eval(node.this, row, tables, params), _eval(node.expression, row, tables, params)
+        decisive = isinstance(node, exp.Or)  # OR: one True decides it; AND: one False does
+        if a is decisive or b is decisive:
+            return decisive
+        return (not decisive) if a is not None and b is not None else None
+    if isinstance(node, exp.Not):
+        v = _eval(node.this, row, tables, params)
+        return None if v is None else not v
+    ops = {exp.EQ: o.eq, exp.NEQ: o.ne, exp.GT: o.gt, exp.GTE: o.ge, exp.LT: o.lt, exp.LTE: o.le}
+    if type(node) in ops:
+        (ka, a), (kb, b) = _value(node.this, row, tables, params), _value(node.expression, row, tables, params)
+        return _cmp(ops[type(node)], a, b) if ka and kb else None
+    if isinstance(node, exp.In) and node.expressions:
+        ka, a = _value(node.this, row, tables, params)
+        vals = [_value(x, row, tables, params) for x in node.expressions]
+        if not ka or not all(k for k, _ in vals):
+            return None
+        return a is not None and a in [v for _, v in vals]
+    if isinstance(node, exp.Between):
+        ka, a = _value(node.this, row, tables, params)
+        (kl, lo), (kh, hi) = (_value(node.args["low"], row, tables, params),
+                              _value(node.args["high"], row, tables, params))
+        if not (ka and kl and kh):
+            return None
+        lo_ok, hi_ok = _cmp(o.ge, a, lo), _cmp(o.le, a, hi)
+        return None if lo_ok is None or hi_ok is None else lo_ok and hi_ok
+    if isinstance(node, (exp.Column, exp.Boolean)):  # WHERE active / WHERE TRUE
+        known, v = _value(node, row, tables, params)
+        return bool(v) if known and v is not None else (False if known else None)
+    if isinstance(node, exp.Is) and isinstance(node.expression, exp.Null):
+        ka, a = _value(node.this, row, tables, params)
+        return (a is None) if ka else None
+    return None
+
+
+def _matcher(where, tables, params):
+    if where is None:
+        return None
+    return lambda row: _eval(where, row, tables, params)
+
+
 def _name(t: "exp.Table") -> str:
     return ".".join(p for p in (t.args.get("db") and t.db, t.name) if p)
 
@@ -132,10 +204,19 @@ def touches(sql: str, params: list):
     ctes = {c.alias for c in tree.find_all(exp.CTE)}
     out = []
 
-    def add(table, kind, rows, where, **extra):
+    def full(where_node):
+        """The whole condition as text (a range touch shows all of it, key equalities included)."""
+        if where_node is None:
+            return None
+        return _text(where_node.this if isinstance(where_node, exp.Where) else where_node, params)
+
+    def add(table, kind, rows, where, match=None, where_node=None, **extra):
         for res, row, precise in _resources(table, rows, where):
-            out.append({"resource": res, "kind": kind, "table": table, "rows": [row] if row else None,
-                        "where": where, "precise": precise, **extra})
+            t = {"resource": res, "kind": kind, "table": table, "rows": [row] if row else None,
+                 "where": where if precise or where_node is None else full(where_node), "precise": precise, **extra}
+            if not precise and match is not None:
+                t["_match"] = match
+            out.append(t)
 
     def read_tables(node, skip=()):
         for t in node.find_all(exp.Table):
@@ -151,12 +232,19 @@ def touches(sql: str, params: list):
             sel = t.parent_select
             where = sel.args.get("where") if sel is not None else None
             lock = bool(sel.args.get("locks")) if sel is not None else False
-            rows, cond = _rows(where, {t.alias_or_name, n}, params)
+            names = {t.alias_or_name, n}
+            rows, cond = _rows(where, names, params)
             for res, row, precise in _resources(n, rows, cond):
                 if (res, cond) not in seen:
                     seen.add((res, cond))
                     out.append({"resource": res, "kind": "read", "table": n, "rows": [row] if row else None,
-                                "where": cond, "precise": precise, "lock": lock})
+                                "where": cond if precise else full(where), "precise": precise, "lock": lock})
+                    if sel is not None and any(sel.args.get(k) for k in ("joins", "limit", "offset", "having")):
+                        out[-1]["partial"] = True  # rows also filtered by a join / LIMIT: "no WHERE" isn't "all"
+                    if sel is not None and len(sel.expressions) == 1 and isinstance(sel.expressions[0], exp.Column):
+                        out[-1]["column"] = sel.expressions[0].name  # fetchval-style scalar: its value is this column
+                    if not precise and where is not None:
+                        out[-1]["_match"] = _matcher(where, names, params)
 
     if isinstance(tree, exp.Insert):
         target = tree.this.this if isinstance(tree.this, exp.Schema) else tree.this
@@ -178,7 +266,7 @@ def touches(sql: str, params: list):
         elif source is not None:
             reads(source)
         add(table, "write", rows, None, writes=writes or None,
-            upsert=tree.args.get("conflict") is not None)
+            upsert=tree.args.get("conflict") is not None, insert=True)
         return out
 
     if isinstance(tree, exp.Update):
@@ -190,14 +278,17 @@ def touches(sql: str, params: list):
                 ok, v = _param(a.expression, params)
                 writes[a.this.name] = v if ok else Expr(_text(a.expression, params))
         rows, where = _rows(tree.args.get("where"), {alias, table}, params)
-        add(table, "write", rows, where, writes=writes)
+        add(table, "write", rows, where, _matcher(tree.args.get("where"), {alias, table}, params),
+            tree.args.get("where"), writes=writes)
         reads(tree, skip={table})
         return out
 
     if isinstance(tree, exp.Delete):
         table = _name(tree.this)
-        rows, where = _rows(tree.args.get("where"), {tree.this.alias_or_name, table}, params)
-        add(table, "write", rows, where, writes={"(deleted)": True})
+        names = {tree.this.alias_or_name, table}
+        rows, where = _rows(tree.args.get("where"), names, params)
+        add(table, "write", rows, where, _matcher(tree.args.get("where"), names, params), tree.args.get("where"),
+            writes={"(deleted)": True})
         return out
 
     if isinstance(tree, (exp.Select, exp.Union)) or tree.find(exp.Select):

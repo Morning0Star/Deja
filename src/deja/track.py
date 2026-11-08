@@ -7,7 +7,9 @@
 * ``dict`` / ``list`` / ``set``: returns a tracked copy (use the returned object). Key or item operations are
   reported per key: ``x in d``, ``d[k]``, ``d.get(k)``, ``d[k] = v``, ``del d[k]``, ``pop``, ``setdefault``,
   ``update``; for lists and sets ``in``, ``count``, ``append``, ``add``, ``remove``, ``discard``.
-  Iterating or ``len()`` is not reported.
+  Reading the whole container (iterating, ``len()``, ``bool()``, ``keys()`` / ``values()`` / ``items()``, list
+  indexing) is reported as one read of ``name[*]`` with the keys it saw (up to 200; past that, the count), so the
+  report can tell whether it covered a key another request changed.
 * any other object with a ``__dict__``: tracked in place (its class is swapped for a subclass) and returned.
   Reading or assigning a public data attribute is reported as ``name.attr``; methods and ``_private`` names are not.
 
@@ -15,13 +17,34 @@ Reports go through :func:`deja.touch`, so they are recorded only inside a reques
 check otherwise. Tracking only feeds the report; record and replay work without it.
 """
 
-from .annotate import touch
+from . import annotate
 
 _MISSING = object()
+SNAPSHOT_LIMIT = 200
+_busy = False  # a report encodes its value, which may read another tracked container: don't report that read
+
+
+def touch(resource, kind, value):
+    global _busy
+    if _busy:
+        return
+    _busy = True
+    try:
+        annotate.touch(resource, kind, value)
+    finally:
+        _busy = False
 
 
 def _res(name, key, k):
     return f"{name}[{key}={k}]" if key else f"{name}[{k}]"
+
+
+def _whole(obj, items):
+    """Report a read of the whole container; ``items`` is a callable giving its keys (only called when recording)."""
+    if _busy or annotate._recorder() is None:
+        return
+    n = obj._deja_len()
+    touch(_res(obj._deja_name, obj._deja_key, "*"), "read", list(items()) if n <= SNAPSHOT_LIMIT else n)
 
 
 class TrackedDict(dict):
@@ -74,6 +97,36 @@ class TrackedDict(dict):
         for k, v in dict(*args, **kw).items():
             self[k] = v
 
+    # whole-container reads
+    def _deja_len(self):
+        return dict.__len__(self)
+
+    def _keys(self):
+        return dict.keys(self)
+
+    def __iter__(self):
+        _whole(self, self._keys)
+        return dict.__iter__(self)
+
+    def __len__(self):
+        _whole(self, self._keys)
+        return dict.__len__(self)
+
+    def keys(self):
+        _whole(self, self._keys)
+        return dict.keys(self)
+
+    def values(self):
+        _whole(self, self._keys)
+        return dict.values(self)
+
+    def items(self):
+        _whole(self, self._keys)
+        return dict.items(self)
+
+    def __reduce__(self):  # copy / pickle give a plain dict
+        return dict, (dict.copy(self),)
+
 
 class _Members:
     """Shared membership reporting for tracked lists and sets."""
@@ -92,6 +145,17 @@ class _Members:
         super().remove(item)
         self._r(item, "write", None)
 
+    def _items(self):
+        return super().__iter__()
+
+    def __iter__(self):
+        _whole(self, self._items)
+        return super().__iter__()
+
+    def __len__(self):
+        _whole(self, self._items)
+        return super().__len__()
+
 
 class TrackedList(_Members, list):
     __slots__ = ("_deja_name", "_deja_key")
@@ -109,6 +173,20 @@ class TrackedList(_Members, list):
         super().append(item)
         self._r(item, "write", item)
 
+    def _deja_len(self):
+        return list.__len__(self)
+
+    def __getitem__(self, i):
+        _whole(self, self._items)
+        return list.__getitem__(self, i)
+
+    def index(self, item, *args):
+        _whole(self, self._items)
+        return list.index(self, item, *args)
+
+    def __reduce__(self):
+        return list, (list.copy(self),)
+
 
 class TrackedSet(_Members, set):
     __slots__ = ("_deja_name", "_deja_key")
@@ -124,6 +202,12 @@ class TrackedSet(_Members, set):
     def discard(self, item):
         super().discard(item)
         self._r(item, "write", None)
+
+    def _deja_len(self):
+        return set.__len__(self)
+
+    def __reduce__(self):
+        return set, (set.copy(self),)
 
 
 _classes: dict = {}

@@ -1,7 +1,7 @@
 import pytest
 
 import deja
-from deja import events as ev
+from deja import codec, events as ev
 from deja.loop import recording_loop
 from deja.track import TrackedDict
 
@@ -82,3 +82,19 @@ def test_untracked_outside_a_request_and_rejects_slots():
     with pytest.raises(TypeError):
         deja.track(S(), "s")
 
+
+
+def test_iteration_and_len_report_a_whole_container_read():
+    d = deja.track({"a": 1, "b": 2}, "carts")
+    users = deja.track(["ada"], "users", key="username")
+
+    def work():
+        assert sorted(d) == ["a", "b"] and len(d) == 2 and list(d.items()) == [("a", 1), ("b", 2)]
+        assert users[0] == "ada" and users
+        assert dict(d) == {"a": 1, "b": 2}
+
+    got = touches_from(work)
+    got = [(r, k, codec.decode(v)) for r, k, v in got]
+    assert ("carts[*]", "read", ["a", "b"]) in got and ("users[username=*]", "read", ["ada"]) in got
+    import copy
+    assert type(copy.copy(d)) is dict and type(copy.deepcopy(users)) is list

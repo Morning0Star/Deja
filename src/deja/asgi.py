@@ -7,6 +7,9 @@ For each HTTP request it records method, path, headers (sensitive ones redacted)
 re-send the request during replay), then the response status. A recording is written when the response status is
 5xx, an exception escapes the app, or app code calls ``deja.flag()`` during the request. Without a recording loop
 the middleware is a pass-through.
+
+On the first request it also tracks the app's shared in-memory state for the report (``track=False`` turns that
+off; see :mod:`deja.autotrack`).
 """
 
 import asyncio
@@ -44,11 +47,14 @@ def flag(reason: str = "") -> None:
 
 
 class DejaMiddleware:
-    def __init__(self, app, directory: str = "deja-recordings", on_dump=None):
+    def __init__(self, app, directory: str = "deja-recordings", on_dump=None, track: bool = True):
         self.app = app
         self.directory = directory
         self.on_dump = on_dump  # optional callback(path, reason) e.g. for logging or tests
+        self.track = track  # track shared in-memory state automatically (see deja.autotrack)
+        self.tracked: list = []
         self._warned = False
+        self._scanned = False
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -60,6 +66,11 @@ class DejaMiddleware:
                 self._warned = True
                 warnings.warn("deja: not running on a recording loop; requests are not recorded", RuntimeWarning)
             return await self.app(scope, receive, send)
+        if self.track and not self._scanned:  # once, on the first request: startup has built the app's state
+            self._scanned = True
+            from .autotrack import auto_track
+
+            self.tracked = auto_track(scope.get("app"))
 
         # Read the whole body first: replay needs it, and it keeps the recorded request self-contained.
         chunks, size, more = [], 0, True
