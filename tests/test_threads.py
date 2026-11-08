@@ -80,7 +80,7 @@ def test_sync_endpoints_lost_update_found_and_replayed(tmp_path):
 def test_sync_dependency_check_then_act_with_async_endpoint(tmp_path):
     path, responses = record([("POST", "/seat/ada"), ("POST", "/seat/ada"), ("GET", "/count")],
                              str(tmp_path / "seat.deja"))
-    assert [r.json() for r in responses[:2]] == [{"seats": 1}, {"seats": 2}]
+    assert sorted(r.json()["seats"] for r in responses[:2]) == [1, 2]  # (which thread ends first is the OS's call)
     a = analyze(*read(path))
     c = a["conflicts"][0]
     assert c["pattern"] == "check-then-act" and c["resource"] == "seats[ada]"
