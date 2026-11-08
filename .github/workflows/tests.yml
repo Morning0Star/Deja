@@ -1,19 +1,26 @@
 name: Tests
 
+# Started by hand only (Actions → Tests → Run workflow): the full matrix uses a lot of the monthly minutes
+# (macOS minutes count 10x, Windows 2x). Choose "linux" for one Linux job, or "full" for every OS and version.
 on:
-  push:
-  pull_request:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: "linux (one job) or full (every OS and Python)"
+        default: linux
+        type: choice
+        options: [linux, full]
 
 jobs:
   test:
     name: ${{ matrix.os }} / Python ${{ matrix.python }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20  # a hung test must not eat the month's minutes
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python: ["3.12", "3.13", "3.14", "3.15"]
+        os: ${{ fromJSON(inputs.scope == 'full' && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
+        python: ${{ fromJSON(inputs.scope == 'full' && '["3.12", "3.13", "3.14", "3.15"]' || '["3.14"]') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -54,7 +61,9 @@ jobs:
 
   pypy:
     name: ubuntu-latest / PyPy 3.12
+    if: inputs.scope == 'full'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

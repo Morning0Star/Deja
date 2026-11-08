@@ -59,17 +59,19 @@ def test_write_skew_two_doctors_both_leave(tmp_path):
 def bank_app():
     app = FastAPI()
     balances = {"x": 100, "y": 0}
+    halfway = asyncio.Event()  # makes the recording sure to read in the middle (not tracked: not a container)
 
     @app.post("/transfer")
     async def transfer():
         balances["x"] -= 10
+        halfway.set()
         await asyncio.sleep(0.01)  # e.g. an audit call between the two halves
         balances["y"] += 10
         return {}
 
     @app.post("/total")
     async def total():
-        await asyncio.sleep(0.005)
+        await halfway.wait()
         return {"total": balances["x"] + balances["y"]}
 
     return app
@@ -125,6 +127,7 @@ def lock_app(dsn):
 
 @pg
 def test_deadlock_is_explained_and_replays_without_the_database(tmp_path):
+    pytest.importorskip("asyncpg")
     path, r = record(lock_app(PG_DSN), ["/move/1/2", "/move/2/1"], tmp_path / "dead.deja")
     assert sorted(x.json()["ok"] for x in r) == [False, True], [x.json() for x in r]
     a = analyze(*read(path))

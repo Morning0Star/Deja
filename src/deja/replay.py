@@ -858,6 +858,7 @@ def replay(recording, app_factory, deadline_s: float = 10.0, track: bool = True)
                              Rules(rules.get("skip"), rules.get("only")))
         recorded = (schedule.header.get("catalog") or {}).get("source") or {}
         loop.code_changed = changed(recorded, current) if recorded else []
+        loop._progress()  # preparing the app (a heap scan: slow on PyPy) is not time the recording waited
         loop.armed = True
         await loop.done.wait()
         # connections still open at the end of the recording stay open: don't wait for those

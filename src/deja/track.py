@@ -79,6 +79,7 @@ def _calibrate():
 
 
 _FRESH_REFS = _calibrate()
+_refcount = getattr(sys, "getrefcount", lambda v: 1 << 30)  # PyPy has none: nothing counts as fresh there
 _OWN_FILE = __file__
 
 
@@ -187,7 +188,7 @@ class _MappingOps(_Tracked):
         return found
 
     def __setitem__(self, k, v):
-        refs = sys.getrefcount(v)  # first: anything below adds references
+        refs = _refcount(v)  # first: anything below adds references
         on = self._on()
         if self._deja_name is not None and type(v) in COPIES and _fresh(v, refs):
             v = _child(self, k, v)
@@ -228,7 +229,7 @@ class _MappingOps(_Tracked):
         return k, v
 
     def setdefault(self, k, default=None):
-        refs = sys.getrefcount(default)
+        refs = _refcount(default)
         had = dict.__contains__(self, k)
         on = self._on(1 if had else 2)
         if not had and self._deja_name is not None and type(default) in COPIES and _fresh(default, refs):
