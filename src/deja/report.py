@@ -155,7 +155,7 @@ if (D.replay) { pill.textContent = D.replay.matched + " / " + D.replay.times + "
 else { pill.textContent = "not replayed in this report"; pill.className = "pill none"; }
 const C0 = D.conflicts[0];
 const PAT = {"lost-update": "Lost update", "check-then-act": "Check-then-act race", "stale-read": "Stale read"};
-$("kicker").textContent = C0 ? PAT[C0.pattern] + " on " + L(C0.resource) : "No race found between requests";
+$("kicker").textContent = C0 ? (C0.confidence === "possible" ? "Possible " + PAT[C0.pattern].toLowerCase() : PAT[C0.pattern]) + " on " + L(C0.resource) : "No race found between requests";
 if (!C0) $("story").classList.add("clean");
 $("storytext").textContent = D.story;
 $("verdict").textContent = D.replay ? D.replay.summary :

@@ -12,6 +12,8 @@ from urllib.parse import urlsplit
 
 from . import codec
 from . import events as ev
+from . import sqltouch
+from .sqltouch import Expr as _Expr
 
 # ---------------------------------------------------------------------- SQL -> resources (rule based)
 _TABLE = r'([A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)?|"[^"]+")'
@@ -57,7 +59,22 @@ def _assignments(sets, params):
 
 
 def sql_touches(sql: str, params: list) -> list[dict]:
-    """``[{"resource", "kind": "read"|"write", "columns", "writes"}]`` for one statement; [] if not understood."""
+    """``[{"resource", "kind": "read"|"write", "table", "precise", "where", "writes"}]`` for one statement.
+
+    Uses sqlglot when installed (``pip install deja[sql]``): joins, subqueries, CTEs, IN / ANY lists, upserts.
+    Otherwise (or if sqlglot can't parse it) simple rules that understand one table and one ``col = value``.
+    """
+    parsed = sqltouch.touches(str(sql), params)
+    if parsed is not None:
+        return parsed
+    out = _rule_touches(sql, params)
+    for t in out:
+        t["table"] = t["resource"].split("[", 1)[0]
+        t["precise"] = "[" in t["resource"]
+    return out
+
+
+def _rule_touches(sql, params):
     s = " ".join(str(sql).split())
     low = s.lower()
     m = re.match(rf"select\s+(.+?)\s+from\s+{_TABLE}(.*)$", s, re.I)
@@ -120,8 +137,12 @@ def short(value, limit=60):
         v = codec.decode(value)
     except Exception:
         v = value
+    if isinstance(v, list) and len(v) == 1 and isinstance(v[0], codec.FakeRecord):
+        v = v[0]  # one row: show the row itself
     if isinstance(v, codec.FakeRecord):
         text = ", ".join(f"{k}={x!r}" for k, x in v.items())
+    elif isinstance(v, list) and v and all(isinstance(r, codec.FakeRecord) for r in v):
+        text = f"{len(v)} rows" if len(v) > 3 else "; ".join(", ".join(f"{k}={x!r}" for k, x in r.items()) for r in v)
     elif isinstance(v, list) and len(v) > 3:
         text = f"{len(v)} rows"
     else:
@@ -131,10 +152,6 @@ def short(value, limit=60):
 
 def _root(path):
     return path.split(".", 1)[0] if path else None
-
-
-class _Expr(str):
-    """A SQL expression (not a literal value); printed without quotes."""
 
 
 def _fmt_writes(w):
@@ -240,11 +257,28 @@ def _absent(v):
 
 
 def _conflicts(touches):
+    """Pairs of requests whose reads and writes of one resource interleaved.
+
+    A touch of a specific row (``orders[id=7]``), a Redis key or an app-reported resource is exact. A query that
+    covered a whole table or a range (``WHERE price > 100``) may include rows other requests touched; it is matched
+    against every row of that table and the conflict is marked ``confidence: "possible"``.
+    """
     by_res = defaultdict(list)
+    broad = defaultdict(list)  # table -> table-level touches
     for t in touches:
-        rowish = "[" in t["resource"] or t["resource"].startswith("redis:") or t.get("source") == "reported by the app"
-        if t["kind"] in ("read", "write") and rowish:
+        if t["kind"] not in ("read", "write"):
+            continue
+        exact = t.get("precise") or t["resource"].startswith("redis:") or t.get("source") == "reported by the app"
+        if exact:
             by_res[t["resource"]].append(t)
+        elif t.get("table"):
+            broad[t["table"]].append({**t, "broad": True})
+    for table, acc in broad.items():
+        rows = [r for r in by_res if r.split("[", 1)[0] == table]
+        for r in rows:
+            by_res[r].extend(acc)
+        if not rows:
+            by_res[table].extend(acc)
     out, seen = [], set()
     for res, acc in by_res.items():
         acc.sort(key=lambda t: t["seq"])
@@ -263,19 +297,23 @@ def _conflicts(touches):
                 r_a, r_b = ra[0], rb[0]
                 first_wa = next((w for w in wa if w["seq"] > r_a["seq"]), None)
                 if r_a["seq"] < r_b["seq"] and (first_wa is None or r_b["seq"] < first_wa["seq"]):
-                    key = (res, a, b)
+                    later_wb = next((w for w in wb if w["seq"] > r_b["seq"]), None)
+                    involved = [r_a, r_b] + [w for w in (first_wa, later_wb) if w]
+                    possible = any(t.get("broad") for t in involved)
+                    key = (res.split("[", 1)[0], a, b) if possible else (res, a, b)
                     if key in seen:
                         continue
                     seen.add(key)
-                    later_wb = next((w for w in wb if w["seq"] > r_b["seq"]), None)
                     if first_wa and later_wb:
                         pattern = "check-then-act" if _absent(r_a["value"]) and _absent(r_b["value"]) else "lost-update"
                     elif first_wa or later_wb:
                         pattern = "stale-read"
                     else:
                         continue
-                    involved = [r_a, r_b] + [w for w in (first_wa, later_wb) if w]
                     out.append({"pattern": pattern, "resource": res, "a": a, "b": b,
+                                "confidence": "possible" if possible else "certain",
+                                "broad": next((f"{t['table']}" + (f" WHERE {t['where']}" if t.get("where") else "")
+                                               for t in involved if t.get("broad")), None),
                                 "read_a": short(codec.encode(r_a["value"])), "read_b": short(codec.encode(r_b["value"])),
                                 "write_a": _fmt_writes(first_wa.get("writes")) if first_wa else None,
                                 "write_b": _fmt_writes(later_wb.get("writes")) if later_wb else None,
@@ -285,7 +323,7 @@ def _conflicts(touches):
                                 "t0": min(t["t"] for t in involved if t["t"] is not None),
                                 "t1": max(t["t"] for t in involved if t["t"] is not None)})
     order = {"lost-update": 0, "check-then-act": 1, "stale-read": 2}
-    out.sort(key=lambda c: (order[c["pattern"]], c["t0"] or 0))
+    out.sort(key=lambda c: (c["confidence"] != "certain", order[c["pattern"]], c["t0"] or 0))
     return out
 
 
@@ -333,6 +371,9 @@ def _story(conflicts, requests, names, header, labels):
         writer = A if c["write_a"] else B
         text = (f"{who} ran at the same time. {B} read {res} ({c['read_b']}) while {A} was in the middle of "
                 f"changing it; {writer} then wrote {c['write_a'] or c['write_b']}. {B} acted on a stale value.")
+    if c["confidence"] == "possible":
+        text = ("Possible conflict. " + text + f" Déjà is not certain: one query covered {c['broad']} rather than "
+                f"a specific row, so it may not have included the same row.")
     if reason:
         text += f" The app reported: {reason}."
     if len(conflicts) > 1:
