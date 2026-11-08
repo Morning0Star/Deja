@@ -103,7 +103,38 @@ def _rule_touches(sql, params):
     return []
 
 
-REDIS_READ = {"GET", "MGET", "HGET", "HGETALL", "EXISTS", "SMEMBERS", "LRANGE", "ZRANGE", "TTL", "STRLEN"}
+REDIS_READ = {"GET", "MGET", "HGET", "HGETALL", "HMGET", "HEXISTS", "HLEN", "EXISTS", "SMEMBERS", "SISMEMBER", "SCARD",
+              "LRANGE", "LLEN", "LINDEX", "ZRANGE", "ZSCORE", "ZCARD", "TTL", "PTTL", "STRLEN", "TYPE", "WATCH"}
+_REDIS_ALL_KEYS = {"MGET", "EXISTS", "DEL", "UNLINK", "WATCH", "TOUCH", "SUNION", "SINTER", "SDIFF"}
+
+
+def _redis_touches(args):
+    """Touches of one Redis command: every key it names (MGET / DEL / MSET / EVAL keys), read or written."""
+    if not args:
+        return []
+    cmd, rest = str(args[0]).upper(), [str(a) for a in args[1:]]
+    if not rest:
+        return []
+    kind = "read" if cmd in REDIS_READ else "write"
+    if cmd in _REDIS_ALL_KEYS:
+        keys, values = rest, [None] * len(rest)
+    elif cmd in ("MSET", "MSETNX"):
+        keys, values = rest[0::2], rest[1::2]
+    elif cmd in ("EVAL", "EVALSHA", "FCALL"):  # a script runs atomically on the server: one write of its keys
+        try:
+            n = int(rest[1])
+        except (IndexError, ValueError):
+            return []
+        keys, values = rest[2:2 + n], [None] * n
+    else:
+        keys, values = rest[:1], rest[1:2] or [None]
+    out = []
+    for k, v in zip(keys, values):
+        t = {"resource": f"redis:{k}", "kind": kind}
+        if kind == "write":
+            t["writes"] = {"value": v} if v is not None else {f"({cmd.lower()})": True}
+        out.append(t)
+    return out
 
 
 def call_touches(io: dict, kinds: dict | None = None) -> list[dict]:
@@ -120,13 +151,12 @@ def call_touches(io: dict, kinds: dict | None = None) -> list[dict]:
             return []
         return [{"resource": res, "kind": kind or ("read" if d["method"] in ("GET", "HEAD") else "write")}]
     if op == "redis.cmd" and d.get("args"):
-        cmd, *rest = d["args"]
-        if rest:
-            kind = "read" if cmd.upper() in REDIS_READ else "write"
-            t = {"resource": f"redis:{rest[0]}", "kind": kind}
-            if kind == "write" and len(rest) > 1:
-                t["writes"] = {"value": rest[1]}
-            return [t]
+        return _redis_touches(d["args"])
+    if op == "redis.pipeline" and d.get("commands"):  # MULTI / EXEC: the server runs them as one step
+        out = []
+        for c in d["commands"]:
+            out += _redis_touches(c)
+        return out
     if op == "executor" and d.get("function"):
         return [{"resource": f"worker:{d['function']}", "kind": "call"}]
     return []
@@ -187,6 +217,9 @@ def analyze(header: dict, events: list) -> dict:
     touches: list[dict] = []
     messages: dict[str, int] = defaultdict(int)  # WebSocket connection -> messages received so far
     tx: dict[str, list] = {}  # task -> stack of the writes made in each open transaction / savepoint
+    iso: dict[str, dict] = {}  # task -> {"level", "snap"} of its open transaction (REPEATABLE READ / SERIALIZABLE)
+    held: dict[str, list] = {}  # task -> rows its open transaction wrote or locked (for deadlocks)
+    deadlocks: list = []
 
     def stamp(t):
         nonlocal t_base, now
@@ -248,11 +281,24 @@ def analyze(header: dict, events: list) -> dict:
                 row = {**tch, "seq": io["seq0"] if at_start else seq, "t": io["t0"] if at_start else t1,
                        "req": io["req"], "task": e[1], "op": e[2], "value": value, "_result": decoded,
                        "result": io["result"], "source": "recorded call"}
+                level = iso.get(e[1])
+                if level is not None and e[2].startswith("pg."):
+                    if level["snap"] is None:
+                        level["snap"] = (io["seq0"], io["t0"])  # the snapshot: taken by the first statement
+                    if tch["kind"] == "read":  # sees the database as of the snapshot, whatever committed since
+                        row["seq"], row["t"] = level["snap"]
+                    row["serializable"] = level["level"] == "serializable"
+                if e[4] == "ok" and tx.get(e[1]) and (tch["kind"] == "write" or tch.get("lock")):
+                    held.setdefault(e[1], []).append((tch["resource"], seq, t1))
                 if tch["kind"] == "write" and tx.get(e[1]):
                     tx[e[1]][-1].append(row)  # inside a transaction: other requests see it once it commits
                 else:
                     touches.append(row)
             if e[2] == "pg.tx.start" and e[4] == "ok":
+                if not tx.get(e[1]):
+                    level = (io.get("detail") or {}).get("isolation") or "read_committed"
+                    if level in ("repeatable_read", "serializable"):
+                        iso[e[1]] = {"level": level, "snap": None}
                 tx.setdefault(e[1], []).append([])
             elif e[2] in ("pg.tx.commit", "pg.tx.rollback") and tx.get(e[1]):
                 done = tx[e[1]].pop()
@@ -262,6 +308,12 @@ def analyze(header: dict, events: list) -> dict:
                     tx[e[1]][-1].extend(done)  # a savepoint released into the transaction around it
                 else:
                     touches.extend({**w, "seq": seq, "t": t1, "committed": True} for w in done)
+                if not tx[e[1]]:
+                    iso.pop(e[1], None)
+                    held.pop(e[1], None)
+            if e[4] == "err" and "deadlock" in str((io.get("raw") or {}).get("type", "")).lower():
+                deadlocks.append({"io": io, "held": {k: list(v) for k, v in held.items() if k != e[1]},
+                                  "mine": list(held.get(e[1], []))})
         elif code == ev.TOUCH and e[1] and e[1].startswith("q"):
             t = stamp(e[5] if len(e) > 5 else None)
             touches.append({"resource": e[2], "kind": e[3], "seq": seq, "t": t, "req": _root(e[1]), "task": e[1],
@@ -275,6 +327,12 @@ def analyze(header: dict, events: list) -> dict:
     touches.sort(key=lambda t: t["seq"])
     touches = _narrow(touches)
     conflicts = _conflicts(touches)
+    skew = [c for c in _write_skew(touches, conflicts)  # a range check-then-act already tells this one
+            if not any(r.get("range") and {r["a"], r["b"]} == {c["a"], c["b"]} and {c["x"], c["y"]} <= set(r["rows"])
+                       for r in conflicts)]
+    conflicts = skew + _torn_reads(touches) + _deadlocks(deadlocks, ios) + conflicts
+    order = {"deadlock": 0, "lost-update": 1, "check-then-act": 2, "write-skew": 3, "torn-read": 4, "stale-read": 5}
+    conflicts.sort(key=lambda c: (c["confidence"] != "certain", order[c["pattern"]], c["t0"] or 0))
     names = _names(conflicts, requests)
     for c in conflicts:
         c["names"] = {r: names.get(r, r) for r in (c["a"], c["b"])}
@@ -516,6 +574,8 @@ def _conflicts(touches):
                 wb = [t for t in acc if t["req"] == b and t["kind"] == "write"]
                 if not (ra and rb):
                     continue
+                if all(t.get("serializable") for t in ra + rb + wa + wb):
+                    continue  # both SERIALIZABLE and both committed: Postgres would have aborted one otherwise
                 r_a, r_b = ra[0], rb[0]
                 first_wa = next((w for w in wa if w["seq"] > r_a["seq"]), None)
                 if r_a["seq"] < r_b["seq"] and (first_wa is None or r_b["seq"] < first_wa["seq"]):
@@ -551,6 +611,123 @@ def _conflicts(touches):
     out += ranged
     order = {"lost-update": 0, "check-then-act": 1, "stale-read": 2}
     out.sort(key=lambda c: (c["confidence"] != "certain", order[c["pattern"]], c["t0"] or 0))
+    return out
+
+
+def _exact(touches):
+    """Touches of one specific thing (a row, a key, in-memory state), not ranges still undecided."""
+    out = []
+    for t in touches:
+        if t["kind"] not in ("read", "write") or (t.get("expanded") and not t.get("only")):
+            continue
+        if t.get("precise") or t["resource"].startswith("redis:") or t.get("source") == "reported by the app":
+            if not t["resource"].endswith("*]"):
+                out.append(t)
+    return out
+
+
+def _by_req(touches):
+    reads, writes = defaultdict(dict), defaultdict(dict)
+    for t in sorted(touches, key=lambda t: t["seq"]):
+        (reads if t["kind"] == "read" else writes)[t["req"]].setdefault(t["resource"], t)
+    return reads, writes
+
+
+def _conflict(pattern, resource, a, b, involved, **fields):
+    return {"pattern": pattern, "resource": resource, "a": a, "b": b, "confidence": "certain", "broad": None,
+            "narrowed": None, "read_a": None, "read_b": None, "write_a": None, "write_b": None, "last_writer": b,
+            "seqs": [t["seq"] for t in involved], "t0": min((t["t"] for t in involved if t["t"] is not None), default=0),
+            "t1": max((t["t"] for t in involved if t["t"] is not None), default=0), **fields}
+
+
+def _write_skew(touches, conflicts):
+    """Each request read something the other then changed, and they changed *different* things: A read X and Y and
+    wrote X; B read X and Y and wrote Y, each before seeing the other's write. No single row was overwritten, yet
+    together they can break a rule about X and Y (at least one doctor on call). Removes the stale-read echoes."""
+    reads, writes = _by_req(_exact(touches))
+    out, pairs = [], set()
+    reqs = sorted(set(reads) | set(writes))
+    for i, a in enumerate(reqs):
+        for b in reqs[i + 1:]:
+            for x, wa in writes[a].items():
+                rb = reads[b].get(x)
+                if x in writes[b] or rb is None or rb["seq"] >= wa["seq"]:
+                    continue
+                for y, wb in writes[b].items():
+                    ra = reads[a].get(y)
+                    if y == x or y in writes[a] or ra is None or ra["seq"] >= wb["seq"]:
+                        continue
+                    if (a, b) in pairs:
+                        break
+                    pairs.add((a, b))
+                    involved = sorted([ra, rb, wa, wb], key=lambda t: t["seq"])
+                    out.append(_conflict("write-skew", f"{x} and {y}", a, b, involved, x=x, y=y,
+                                         read_a=f"{y} = {short(codec.encode(ra['value']))}",
+                                         read_b=f"{x} = {short(codec.encode(rb['value']))}",
+                                         write_a=f"{x}: {_fmt_writes(wa.get('writes'))}",
+                                         write_b=f"{y}: {_fmt_writes(wb.get('writes'))}"))
+    for c in out:  # the same story told twice as two stale reads
+        conflicts[:] = [d for d in conflicts if not (d["pattern"] == "stale-read" and {d["a"], d["b"]} == {c["a"], c["b"]}
+                                                    and d["resource"] in (c["x"], c["y"]))]
+    return out
+
+
+def _torn_reads(touches):
+    """A request changed X and then Y as one update; another request read X after the change and Y before it, so it
+    saw the update half done. (Writes in one database transaction commit together, so they never tear.)"""
+    exact = sorted(_exact(touches), key=lambda t: t["seq"])
+    by_req = defaultdict(list)
+    for t in exact:
+        by_req[t["req"]].append(t)
+    out, seen = [], set()
+    for a, ts in by_req.items():
+        ws = [t for t in ts if t["kind"] == "write"]
+        for i, w1 in enumerate(ws):
+            for w2 in ws[i + 1:]:
+                if w2["resource"] == w1["resource"] or w2["seq"] <= w1["seq"]:
+                    continue
+                for b, other in by_req.items():
+                    if b == a or (a, b) in seen:
+                        continue
+                    r1 = next((t for t in other if t["kind"] == "read" and t["resource"] == w1["resource"]
+                               and w1["seq"] < t["seq"]), None)
+                    r2 = next((t for t in other if t["kind"] == "read" and t["resource"] == w2["resource"]
+                               and t["seq"] < w2["seq"]), None)
+                    if r1 is None or r2 is None or not (r1["seq"] < w2["seq"] or w1["seq"] < r2["seq"]):
+                        continue
+                    seen.add((a, b))
+                    x, y = w1["resource"], w2["resource"]
+                    involved = sorted([w1, r1, r2, w2], key=lambda t: t["seq"])
+                    out.append(_conflict("torn-read", f"{x} and {y}", a, b, involved, x=x, y=y,
+                                         read_b=f"{x} = {short(codec.encode(r1['value']))}, "
+                                                f"{y} = {short(codec.encode(r2['value']))}",
+                                         write_a=f"{x}: {_fmt_writes(w1.get('writes'))}, then "
+                                                 f"{y}: {_fmt_writes(w2.get('writes'))}", last_writer=a))
+    return out
+
+
+def _deadlocks(found, ios):
+    """Postgres reported a deadlock: the stopped transaction held some rows and waited for one another request's
+    open transaction held, while that request waited for one of the first's."""
+    out = []
+    for d in found:
+        io = d["io"]
+        waited = {t["resource"] for t in io["touches"]}
+        for task, rows in d["held"].items():
+            hit = next((r for r in rows if r[0] in waited), None)
+            if hit is None:
+                continue
+            # what the other request was waiting for: its statement in flight when the deadlock was reported
+            blocked = next((x for x in ios if x["task"] == task and x["seq0"] < io["seq"] < x["seq"]), None)
+            mine = {r[0] for r in d["mine"]}
+            want = next((t["resource"] for t in (blocked or {}).get("touches", []) if t["resource"] in mine), None)
+            a, b = _root(task), io["req"]
+            involved = [{"seq": hit[1], "t": hit[2]}, {"seq": io["seq0"], "t": io["t0"]},
+                        {"seq": io["seq"], "t": io["t1"]}]
+            out.append(_conflict("deadlock", f"{hit[0]} and {want or 'a row'}", a, b, involved, x=hit[0],
+                                 y=want or "a row", write_a=f"held {hit[0]}", write_b=f"waited for {hit[0]}",
+                                 last_writer=b))
+            break
     return out
 
 
@@ -593,7 +770,24 @@ def _story(conflicts, requests, names, header, labels):
                else f"Two {what_a} requests ({A} and {B})")
     else:
         who = f"{_noun(ra).capitalize()} {A} ({what_a}) and {_noun(rb)} {B} ({what_b})"
-    if c["pattern"] == "lost-update":
+    if c["pattern"] == "write-skew":
+        x, y = _label(c["x"], labels), _label(c["y"], labels)
+        text = (f"{who} ran at the same time. {A} read {y} ({c['read_a']}) and then changed {x} "
+                f"({c['write_a']}); {B} read {x} ({c['read_b']}) and then changed {y} ({c['write_b']}). Each "
+                f"decided from a value the other was about to change, and neither saw the other's write. No single "
+                f"value was overwritten, but together the two changes can break a rule that holds for {x} and {y} "
+                f"together. This is write skew.")
+    elif c["pattern"] == "torn-read":
+        x, y = _label(c["x"], labels), _label(c["y"], labels)
+        text = (f"{who} ran at the same time. {A} changed {x} and then {y} as one update ({c['write_a']}). In "
+                f"between, {B} read both ({c['read_b']}): {x} already changed, {y} not yet. {B} saw the update half "
+                f"done. This is a torn read of {x} and {y}.")
+    elif c["pattern"] == "deadlock":
+        x, y = _label(c["x"], labels), _label(c["y"], labels)
+        text = (f"{who} ran at the same time inside database transactions. {A} held {x} and waited for {y}; "
+                f"{B} held {y} and waited for {x}. Neither could go on, so Postgres stopped {B}'s transaction with "
+                f"a deadlock error. Taking the locks in the same order in every request avoids it.")
+    elif c["pattern"] == "lost-update":
         last = names[c["last_writer"]]
         first = A if last == B else B
         text = (f"{who} ran at the same time. {A} read {res} and got {c['read_a']}. Before {A} saved its change, "

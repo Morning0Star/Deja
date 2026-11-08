@@ -42,7 +42,15 @@ def _detail(op, key):
         if op == "redis.cmd" and isinstance(key, tuple):
             return {"args": [str(a)[:200] for a in list(key[1])[:20]]}
         if op == "redis.pipeline" and isinstance(key, tuple):
-            return {"commands": str(key[1])[:2000]}
+            import ast
+
+            try:
+                commands = [[str(a)[:200] for a in c[:20]] for c in ast.literal_eval(str(key[1]))[:50]]
+            except Exception:
+                commands = None
+            return {"commands": commands} if commands else {"commands_text": str(key[1])[:2000]}
+        if op == "pg.tx.start" and isinstance(key, tuple):
+            return {"isolation": key[1] if len(key) > 1 else "read_committed"}
         if op == "ws.send" and isinstance(key, tuple) and len(key) == 5:
             _, kind, text, data, code = key
             what = text if text is not None else (f"<{len(data)} bytes>" if data is not None else

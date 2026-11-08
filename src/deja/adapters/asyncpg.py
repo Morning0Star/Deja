@@ -78,6 +78,22 @@ def _wrap_simple(op):
     return make
 
 
+def _tx_key(isolation):
+    """Key of a transaction start: the isolation level only when it isn't the default (old recordings match)."""
+    return ("pg.tx.start",) if isolation in (None, "read_committed") else ("pg.tx.start", isolation)
+
+
+def _wrap_tx_start(original):
+    def start(self, *args, **kwargs):
+        if passthrough():
+            return original(self, *args, **kwargs)
+        return io_call("pg.tx.start", _tx_key(getattr(self, "_isolation", None)),
+                       lambda: original(self, *args, **kwargs))
+
+    start.__wrapped__ = original
+    return start
+
+
 def _wrap_tx_exit(original):
     """``async with conn.transaction()`` commits through a private method, not ``commit()``: record it as the
     same commit / rollback call the replay fake makes."""
@@ -366,8 +382,11 @@ def _stop():
 
 
 class FakeTransaction:
+    def __init__(self, isolation=None):
+        self._isolation = isolation
+
     async def start(self):
-        await io_call("pg.tx.start", ("pg.tx.start",), None)
+        await io_call("pg.tx.start", _tx_key(self._isolation), None)
 
     async def commit(self):
         await io_call("pg.tx.commit", ("pg.tx.commit",), None)
@@ -496,7 +515,7 @@ class FakeConnection:
         return FakeCursorFactory(query, args)
 
     def transaction(self, **kwargs):
-        return FakeTransaction()
+        return FakeTransaction(kwargs.get("isolation"))
 
     def is_closed(self):
         return False
@@ -630,7 +649,8 @@ def install():
                 _undo.append(patch(cls, name, _wrap_copy(name)))
     _undo.append(patch(asyncpg.pool.PoolAcquireContext, "__aenter__", _wrap_simple("pg.acquire")))
     _undo.append(patch(asyncpg.pool.PoolAcquireContext, "__aexit__", _wrap_simple("pg.release")))
-    for name in ("start", "commit", "rollback"):
+    _undo.append(patch(asyncpg.transaction.Transaction, "start", _wrap_tx_start))
+    for name in ("commit", "rollback"):
         _undo.append(patch(asyncpg.transaction.Transaction, name, _wrap_simple(f"pg.tx.{name}")))
     _undo.append(patch(asyncpg.transaction.Transaction, "__aexit__", _wrap_tx_exit))
     _undo.append(patch(asyncpg.connection.Connection, "prepare", _wrap_prepare))
