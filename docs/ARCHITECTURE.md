@@ -155,6 +155,10 @@ Per loop pass (generalised from spike S3):
 | D10 | `weakref.ref` callbacks, not `weakref.finalize`, to forget dead tasks | Several times cheaper per task; same effect |
 | D11 | Adapter wrappers are plain functions that return the library call untouched when nothing is recorded | Async wrappers added a coroutine frame per nested call; profiling showed 2.3x more wrapper entries than needed |
 | D12 | Record whether an executor await really suspended (a loop pass ran between start and end) | CPython 3.14.10 can complete `run_in_executor` before the await; assuming "always suspends" stalled replays in CI |
+| D13 | Parse SQL with sqlglot when installed, fall back to simple rules | Joins, subqueries, CTEs, `IN` / `ANY($1)` lists and upserts name the exact rows; the core stays stdlib-only |
+| D14 | A range or whole-table query makes a *possible* conflict, ranked below certain ones | `WHERE price > 100` may or may not include the row another request wrote; saying "certain" would be a guess |
+| D15 | Keep a catalog in the recording: column descriptions of prepared statements and the first result of each out-of-request call | An ORM prepares statements before the recorded window and reads the server version at startup; replay needs both without a database |
+| D16 | `prepare` is an optional call in replay | SQLAlchemy caches prepared statements per connection, so the recording and a fresh replay app can differ in whether a statement is prepared; skipping keeps its suspension, extra ones answer at once |
 
 ## 5. Testing strategy
 
@@ -196,8 +200,8 @@ Per loop pass (generalised from spike S3):
   step where the app resumed (and keeps the count of child tasks created inside it), so replay matches step for
   step without the network. Changed queries are reported as I/O mismatches. Acceptance on Postgres: 1,500/1,500 and
   0/1,500 on 3.12 and 3.14; replays still match with the database stopped. 32 tests on both versions.
-  **Not covered yet:** SQLAlchemy async (uses asyncpg prepared statements), asyncpg cursors / `copy_*` / listeners,
-  streaming httpx responses, results of `run_in_executor` (worker-thread calls still run live in replay).
+  **Not covered yet:** asyncpg listeners, streaming httpx responses. (SQLAlchemy, cursors and `copy_*` were added
+  on 2026-11-08, see below; worker-thread results in M4.)
 
 - **M4 done** (2026-11-08): `benchmarks/run_bench.py` (FastAPI + Postgres + HTTP stub under k6 at fixed rates,
   recording off vs on, alternating, CPU-pinned on Linux) and CI workflows (`tests.yml` on Linux/Windows/macOS x
@@ -205,6 +209,16 @@ Per loop pass (generalised from spike S3):
   unchanged, 0 failed requests, about +12% server CPU, +1 to 3 ms at p99, +17 to 23 MB, 0.10 KB per request. One
   optimisation round (profiling-led) cut Déjà's own time per request by ~40%. Worker-thread results are now recorded
   too (closes an M3 gap and removed a CI-only replay stall). The 5% CPU target is not met yet (see risks).
+
+- **What each request touched** (2026-11-08): `deja.analysis` turns a recording into touches (resource, read or
+  write, value), race patterns (lost update, check-then-act, stale read) and a template-written story; `deja report`
+  writes the interactive HTML page. SQL goes through `deja.sqltouch` (sqlglot, optional `deja[sql]`): rows named
+  for key equality including composite keys, `IN` and `ANY($1)`, subqueries and CTE bodies, `INSERT ... SELECT`,
+  `UPDATE ... FROM`, upserts, `COPY`; range queries become table-level touches and *possible* conflicts.
+  `deja.track(obj)` reports in-memory dict / list / set / attribute access without hand-written `deja.touch`. The
+  asyncpg adapter now covers prepared statements (SQLAlchemy async ORM), cursors and bulk copy; a SQLAlchemy lost
+  update records against Postgres, replays with the database unreachable, and is explained from the SQL the ORM
+  generated with no app hints. 66 tests on 3.12 and 3.14.
 
 ## 8. Milestones (revised)
 

@@ -22,6 +22,9 @@ _inside = contextvars.ContextVar("deja_inside_io", default=False)  # suppress ne
 
 KNOWN = ("asyncpg", "httpx", "redis")
 EXECUTOR_OP = "executor"  # loop.run_in_executor, recorded by the loop itself
+OPTIONAL_OPS = {"pg.prepare"}  # may be skipped by a client-side cache (SQLAlchemy's statement cache); see replay
+OUTSIDE_LIMIT = 500  # distinct out-of-request calls (startup queries) whose first result is kept for replay
+OUTSIDE_MAX_ROWS = 200
 _lock = threading.Lock()
 _installed: dict[str, int] = {}
 
@@ -70,11 +73,16 @@ async def io_call(op: str, key, real, *, encode=codec.encode, decode=codec.decod
     if rec is None:
         return await real()
     if getattr(rec, "replaying", False):
-        if path is None:
+        if path is None:  # startup / background call: answer from the catalog, else a harmless default
+            hit = rec.outside(op, digest(key))
+            if hit is not None:
+                if hit[0] == "err":
+                    raise codec.decode_exc(hit[1])
+                return decode(hit[1])
             return default() if callable(default) else default
         return await rec.io_replay(path, op, digest(key), decode)
     if path is None:
-        return await real()
+        return await _outside(rec, op, key, real, encode)
     rec.io_start(path, op)
     token = _inside.set(True)
     try:
@@ -85,6 +93,28 @@ async def io_call(op: str, key, real, *, encode=codec.encode, decode=codec.decod
     finally:
         _inside.reset(token)
     rec.io_end(path, op, key, "ok", encode(result))
+    return result
+
+
+async def _outside(rec, op, key, real, encode):
+    """Out-of-request call while recording: run it live, and keep the first result of each distinct call so replay
+    can answer startup work (an ORM reading the server version, CREATE TABLE IF NOT EXISTS) without a database."""
+    out = rec.catalog.setdefault("outside", {})
+    if len(out) >= OUTSIDE_LIMIT:
+        return await real()
+    d = f"{op}:{digest(key)}"
+    if d in out:
+        return await real()
+    try:  # no _inside here: the call may run request handling inline (an ASGI test client) or spawn tasks
+        result = await real()
+    except BaseException as exc:
+        out[d] = ("err", codec.encode_exc(exc))
+        raise
+    if not (isinstance(result, list) and len(result) > OUTSIDE_MAX_ROWS):
+        try:
+            out[d] = ("ok", encode(result))
+        except Exception:
+            pass
     return result
 
 

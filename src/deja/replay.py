@@ -153,11 +153,30 @@ class ReplayRecorder(Recorder):
         return value
 
 
+    def outside(self, op, digest):
+        """Recorded first result of an out-of-request call (see adapters._outside), or None."""
+        return (self.schedule.header.get("catalog") or {}).get("outside", {}).get(f"{op}:{digest}")
+
+    async def _suspend_once(self):
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        loop.call_soon(fut.set_result, None)
+        await fut
+
     async def io_replay(self, path, op, digest, decode):
         """Answer an adapter call from the recording, suspending exactly when the recorded call suspended."""
         from . import codec
+        from .adapters import OPTIONAL_OPS
 
         queue = self._io.get(path)
+        # A client-side cache can make an optional call (prepare) happen in one run and not the other: the recorded
+        # app had the statement cached from before the recorded window, or the fresh replay app has it cached now.
+        if op in OPTIONAL_OPS and (not queue or queue[0].op != op):
+            return decode(None)  # not prepared in the recording: answer at once (a cache hit didn't suspend either)
+        while queue and queue[0].op in OPTIONAL_OPS and op != queue[0].op:
+            skipped = queue.popleft()  # prepared in the recording but cached in replay: keep its suspension
+            if skipped.yielded:
+                await self._suspend_once()
         if not queue:
             self.io_misses.append(f"{path}: {op} was not called here in the recording")
             return None
@@ -166,10 +185,7 @@ class ReplayRecorder(Recorder):
             self.io_misses.append(f"{path}: recorded {entry.op} but replay called {op}"
                                   + ("" if entry.op != op else " with different arguments"))
         if entry.yielded:
-            loop = asyncio.get_running_loop()
-            fut = loop.create_future()
-            loop.call_soon(fut.set_result, None)
-            await fut
+            await self._suspend_once()
         if entry.kids:
             self.ids._kids[path] = self.ids._kids.get(path, 0) + entry.kids
         if entry.kind == "err":

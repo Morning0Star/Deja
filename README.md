@@ -46,8 +46,8 @@ configuration takes a different path, Déjà reports where the replay diverged i
 
 1. **Record.** A subclass of the standard asyncio event loop logs which task each loop pass ran (one integer per
    step, so recording is cheap), with stable task ids derived from where each task was created. A middleware marks
-   each HTTP request's task as request scope, and adapters for asyncpg, httpx, redis and `run_in_executor` record
-   what each call returned. Everything sits in a fixed-size ring buffer; a 5xx, an exception or `deja.flag()` saves
+   each HTTP request's task as request scope, and adapters for asyncpg (including SQLAlchemy async, cursors and bulk copy), httpx, redis and `run_in_executor`
+   record what each call returned. Everything sits in a fixed-size ring buffer; a 5xx, an exception or `deja.flag()` saves
    the window around the failing request to a small `.deja` file.
 2. **Replay.** A replay loop with a virtual clock re-sends the recorded requests to a fresh copy of the app and only
    lets request tasks run in the recorded order. Database, HTTP and worker-thread calls get their recorded answers;
@@ -80,8 +80,10 @@ happened and play it back. ([prior art](docs/DESIGN.md#2-what-exists-checked-202
 
 ## Not covered yet
 
-- SQLAlchemy async (it uses asyncpg prepared statements), asyncpg cursors, `copy_*` and listeners, streaming HTTP
-  responses, anyio worker threads (`to_thread`).
+- asyncpg LISTEN/NOTIFY listeners, streaming HTTP responses, anyio worker threads (`to_thread`).
+- Range queries (`WHERE price > 100`) are matched against rows other requests touched as *possible* conflicts;
+  Déjà doesn't evaluate the condition against the data.
+- In-memory state shows up in reports only when tracked (`deja.track(obj)`) or reported (`deja.touch`).
 - uvloop (record on the standard loop), threads and free-threaded builds, Python versions other than 3.12 and 3.14.
 - Worker-thread functions are not re-run during replay, so their side effects don't happen; only their results
   come back.

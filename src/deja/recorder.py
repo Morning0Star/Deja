@@ -68,6 +68,7 @@ class Recorder:
         self.started_at = time.time()
         self.dumps: list[str] = []
         self.loop = None
+        self.catalog: dict = {}  # adapter metadata replay needs (statement columns, startup call results)
 
     # ------------------------------------------------------------------ events
     def _on_task_new(self, path, parent_path, task):
@@ -202,6 +203,7 @@ class Recorder:
             "events_capacity": self.buffer.maxlen,
             "labels": dict(LABELS),
             "clock": "perf_counter_ns",
+            "catalog": {k: dict(v) for k, v in self.catalog.items()},
         }
 
     def since(self, marker: tuple) -> list:
