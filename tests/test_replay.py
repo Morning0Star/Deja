@@ -8,14 +8,20 @@ from deja.replay import Schedule, replay
 from gallery import stress, wallet
 
 
-def record(tmp_path, scenario="wallet", trials=40):
-    asyncio.run(
-        stress.run(scenario, trials, False, None, 60, str(tmp_path), record_passing=True), loop_factory=recording_loop
-    )
-    fails = sorted(glob.glob(os.path.join(tmp_path, f"{scenario}-fail-*.deja")))
-    passes = sorted(glob.glob(os.path.join(tmp_path, f"{scenario}-pass-*.deja")))
-    assert fails and passes, "need at least one failing and one passing trial"
-    return fails[0], passes[0]
+def record(tmp_path, scenario="wallet", trials=40, batches=10):
+    """A recording of a trial that broke the invariant and one that didn't. Whether a trial races is up to timing,
+    and on some machines one kind is rare, so run batches of trials until there is one of each."""
+    fails, passes = [], []
+    for batch in range(batches):
+        out = os.path.join(str(tmp_path), f"batch{batch}")
+        asyncio.run(
+            stress.run(scenario, trials, False, None, 60, out, record_passing=True), loop_factory=recording_loop
+        )
+        fails += sorted(glob.glob(os.path.join(out, f"{scenario}-fail-*.deja")))
+        passes += sorted(glob.glob(os.path.join(out, f"{scenario}-pass-*.deja")))
+        if fails and passes:
+            return fails[0], passes[0]
+    raise AssertionError(f"no {'passing' if fails else 'failing'} trial in {batches * trials} trials")
 
 
 def check_response(result):
