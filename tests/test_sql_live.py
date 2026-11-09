@@ -15,8 +15,9 @@ from deja.analysis import analyze
 from deja.fileformat import read
 from deja.replay import replay
 
-pytestmark = pytest.mark.skipif(not reachable("127.0.0.1", int(PG_DSN.rsplit(":", 1)[1].split("/")[0])),
-                                reason="test Postgres not running")
+pytestmark = pytest.mark.skipif(
+    not reachable("127.0.0.1", int(PG_DSN.rsplit(":", 1)[1].split("/")[0])), reason="test Postgres not running"
+)
 
 
 def booking_app(dsn):
@@ -27,7 +28,9 @@ def booking_app(dsn):
         async def lifespan(app):
             state["pool"] = await asyncpg.create_pool(dsn, min_size=2, max_size=2)
             async with state["pool"].acquire() as conn:
-                await conn.execute("CREATE TABLE IF NOT EXISTS deja_bookings (id serial PRIMARY KEY, room int, day int)")
+                await conn.execute(
+                    "CREATE TABLE IF NOT EXISTS deja_bookings (id serial PRIMARY KEY, room int, day int)"
+                )
                 await conn.execute("TRUNCATE deja_bookings")
             yield
             await state["pool"].close()
@@ -51,8 +54,9 @@ def booking_app(dsn):
 
 
 def test_double_booking_inside_transactions_is_found_and_replays_without_the_database(tmp_path):
-    path, responses = record_concurrently(booking_app(PG_DSN), [("POST", "/book/5/10"), ("POST", "/book/5/10")],
-                                          str(tmp_path / "book.deja"))
+    path, responses = record_concurrently(
+        booking_app(PG_DSN), [("POST", "/book/5/10"), ("POST", "/book/5/10")], str(tmp_path / "book.deja")
+    )
     assert [r.json() for r in responses] == [{"ok": True}, {"ok": True}], "both booked room 5 for day 10"
     a = analyze(*read(path))
     c = a["conflicts"][0]
@@ -66,6 +70,7 @@ def test_double_booking_inside_transactions_is_found_and_replays_without_the_dat
 
 def notice_app(dsn):
     """A request runs a statement that raises NOTICEs; a log listener collects them; another request reads them."""
+
     def factory():
         state = {"notes": []}
 
@@ -94,8 +99,9 @@ def notice_app(dsn):
 
 
 def test_server_log_messages_replay_without_the_database(tmp_path):
-    path, responses = record_concurrently(notice_app(PG_DSN), [("POST", "/migrate"), ("GET", "/notes")],
-                                          str(tmp_path / "notice.deja"))
+    path, responses = record_concurrently(
+        notice_app(PG_DSN), [("POST", "/migrate"), ("GET", "/notes")], str(tmp_path / "notice.deja")
+    )
     assert responses[1].json()["notes"] == ["NOTICE: step 1", "WARNING: careful"]
     r = replay(path, notice_app(DEAD_PORT_DSN), deadline_s=5)
     assert r.followed and r.same_responses, r.summary()
@@ -133,8 +139,9 @@ def kill_app(dsn):
 
 
 def test_termination_listener_replays_without_the_database(tmp_path):
-    path, responses = record_concurrently(kill_app(PG_DSN), [("POST", "/kill"), ("GET", "/closed")],
-                                          str(tmp_path / "kill.deja"))
+    path, responses = record_concurrently(
+        kill_app(PG_DSN), [("POST", "/kill"), ("GET", "/closed")], str(tmp_path / "kill.deja")
+    )
     assert responses[1].json() == {"closed": True}
     r = replay(path, kill_app(DEAD_PORT_DSN), deadline_s=5)
     assert r.followed and r.same_responses, r.summary()

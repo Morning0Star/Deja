@@ -28,8 +28,10 @@ def make(base, record):
                     ev.append((seq, time.perf_counter_ns()))
                     return callback(*a)
             else:
+
                 def wrapped(*a):
                     return callback(*a)
+
             return super().call_soon(wrapped, *args, context=context)
 
     return L
@@ -63,11 +65,12 @@ if __name__ == "__main__":
     rec = bench(make(base, record=True))
     print(f"{sys.version.split()[0]} {sys.platform} steps={steps}")
     for name, t in (("plain", plain), ("wrap", wrap), ("wrap+record", rec)):
-        print(f"  {name:12s} {t*1e3:8.1f} ms  {t/steps*1e9:7.0f} ns/step  (+{(t/plain-1)*100:5.1f}%)")
+        print(f"  {name:12s} {t * 1e3:8.1f} ms  {t / steps * 1e9:7.0f} ns/step  (+{(t / plain - 1) * 100:5.1f}%)")
 
 
 def make_batch(base):
     """Variant B: no wrappers. Log the ready batch once per loop iteration (private _ready / _run_once)."""
+
     class L(base):
         def __init__(self):
             super().__init__()
@@ -86,4 +89,6 @@ def make_batch(base):
 
 if __name__ == "__main__":
     batch = bench(make_batch(asyncio.SelectorEventLoop))
-    print(f"  {'batch-log':12s} {batch*1e3:8.1f} ms  {batch/steps*1e9:7.0f} ns/step  (+{(batch/plain-1)*100:5.1f}%)")
+    print(
+        f"  {'batch-log':12s} {batch * 1e3:8.1f} ms  {batch / steps * 1e9:7.0f} ns/step  (+{(batch / plain - 1) * 100:5.1f}%)"
+    )

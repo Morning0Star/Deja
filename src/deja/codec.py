@@ -141,7 +141,7 @@ def decode(v):
             elif isinstance(r, dict):
                 out.append(FakeRecord(list(r), list(r.values())))
             else:
-                out.append(FakeRecord(cols[:len(r)], list(r)))
+                out.append(FakeRecord(cols[: len(r)], list(r)))
         return out
     raise ValueError(f"unknown codec tag {t!r}")
 

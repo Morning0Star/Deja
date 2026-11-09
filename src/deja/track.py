@@ -117,8 +117,9 @@ def _app_object(v, parent, k):
     if ok is None:
         from .autotrack import _is_app_object
 
-        ok = _APP_TYPES[t] = (t not in _classes.values() and hasattr(v, "__dict__") and _is_app_object(v)
-                              and _swappable(t))
+        ok = _APP_TYPES[t] = (
+            t not in _classes.values() and hasattr(v, "__dict__") and _is_app_object(v) and _swappable(t)
+        )
     if not ok or (annotate._recorder() is None and _thread.get() is None):
         return
     try:
@@ -599,8 +600,15 @@ class TrackedDeque(_MemberOps, collections.deque):
 
 
 # exact type -> its tracked copy's class (deja.autotrack swaps exactly these)
-COPIES = {dict: TrackedDict, collections.defaultdict: TrackedDefaultDict, collections.OrderedDict: TrackedOrderedDict,
-          collections.Counter: TrackedCounter, list: TrackedList, set: TrackedSet, collections.deque: TrackedDeque}
+COPIES = {
+    dict: TrackedDict,
+    collections.defaultdict: TrackedDefaultDict,
+    collections.OrderedDict: TrackedOrderedDict,
+    collections.Counter: TrackedCounter,
+    list: TrackedList,
+    set: TrackedSet,
+    collections.deque: TrackedDeque,
+}
 TRACKED = tuple(COPIES.values())
 
 
@@ -720,8 +728,15 @@ def track(obj, name: str = None, key: str = None):
         return obj
     if type(obj) in COPIES:
         return copy_of(obj, name or type(obj).__name__.lower(), key)
-    for base in (collections.defaultdict, collections.OrderedDict, collections.Counter, dict, list, set,
-                 collections.deque):  # a subclass of its own: track a copy of the closest supported type
+    for base in (
+        collections.defaultdict,
+        collections.OrderedDict,
+        collections.Counter,
+        dict,
+        list,
+        set,
+        collections.deque,
+    ):  # a subclass of its own: track a copy of the closest supported type
         if isinstance(obj, base):
             plain = collections.defaultdict(obj.default_factory, obj) if base is collections.defaultdict else base(obj)
             return copy_of(plain, name or base.__name__.lower(), key)

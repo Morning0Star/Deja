@@ -29,8 +29,16 @@ _get_loop = asyncio._get_running_loop  # returns None instead of raising when no
 _current_task = asyncio.current_task
 
 TARGETS = [
-    (time, "time"), (time, "time_ns"), (time, "monotonic"), (time, "monotonic_ns"), (time, "perf_counter"),
-    (random, "random"), (random, "uniform"), (random, "randint"), (random, "randrange"), (random, "choice"),
+    (time, "time"),
+    (time, "time_ns"),
+    (time, "monotonic"),
+    (time, "monotonic_ns"),
+    (time, "perf_counter"),
+    (random, "random"),
+    (random, "uniform"),
+    (random, "randint"),
+    (random, "randrange"),
+    (random, "choice"),
     (random, "getrandbits"),
     (uuid, "uuid4"),
     (os, "urandom"),
@@ -106,8 +114,9 @@ class DejaDatetime(_REAL_DATETIME, metaclass=_RealType):
         return _REAL_DATETIME(*args, **kwargs)
 
     _now = staticmethod(_wrap("datetime.datetime.now", _REAL_DATETIME.now))
-    _utcnow = staticmethod(_wrap("datetime.datetime.utcnow", lambda: _REAL_DATETIME.now(_dt.timezone.utc)
-                                 .replace(tzinfo=None)))
+    _utcnow = staticmethod(
+        _wrap("datetime.datetime.utcnow", lambda: _REAL_DATETIME.now(_dt.timezone.utc).replace(tzinfo=None))
+    )
     _today = staticmethod(_wrap("datetime.datetime.today", _REAL_DATETIME.today))
 
     @classmethod

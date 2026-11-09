@@ -18,9 +18,23 @@ from . import io_call, passthrough, patch
 
 _undo = []
 _cursors: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()  # cursor -> fetched documents
-METHODS = ("insert_one", "insert_many", "find_one", "update_one", "update_many", "replace_one", "delete_one",
-           "delete_many", "find_one_and_update", "find_one_and_replace", "find_one_and_delete", "count_documents",
-           "estimated_document_count", "distinct", "bulk_write")
+METHODS = (
+    "insert_one",
+    "insert_many",
+    "find_one",
+    "update_one",
+    "update_many",
+    "replace_one",
+    "delete_one",
+    "delete_many",
+    "find_one_and_update",
+    "find_one_and_replace",
+    "find_one_and_delete",
+    "count_documents",
+    "estimated_document_count",
+    "distinct",
+    "bulk_write",
+)
 
 
 def _args(args, kwargs):
@@ -43,8 +57,13 @@ def _encode(r):
     return codec.encode(r)
 
 
-_RESULTS = {"InsertOneResult": InsertOneResult, "InsertManyResult": InsertManyResult, "UpdateResult": UpdateResult,
-            "DeleteResult": DeleteResult, "BulkWriteResult": BulkWriteResult}
+_RESULTS = {
+    "InsertOneResult": InsertOneResult,
+    "InsertManyResult": InsertManyResult,
+    "UpdateResult": UpdateResult,
+    "DeleteResult": DeleteResult,
+    "BulkWriteResult": BulkWriteResult,
+}
 
 
 def _decode(v):
@@ -90,10 +109,20 @@ async def _load(cursor, to_list):
     """Fetch all of a ``find()`` cursor's documents once (recorded), keyed by its query."""
     docs = _cursors.get(cursor)
     if docs is None:
-        key = ("mongo", cursor.collection.full_name, "find", codec.encode({
-            "filter": getattr(cursor, "_spec", None), "projection": getattr(cursor, "_projection", None),
-            "sort": getattr(cursor, "_ordering", None), "skip": getattr(cursor, "_skip", 0),
-            "limit": getattr(cursor, "_limit", 0)}))
+        key = (
+            "mongo",
+            cursor.collection.full_name,
+            "find",
+            codec.encode(
+                {
+                    "filter": getattr(cursor, "_spec", None),
+                    "projection": getattr(cursor, "_projection", None),
+                    "sort": getattr(cursor, "_ordering", None),
+                    "skip": getattr(cursor, "_skip", 0),
+                    "limit": getattr(cursor, "_limit", 0),
+                }
+            ),
+        )
         docs = list(await io_call("mongo.find", key, lambda: to_list(cursor, None), default=list) or [])
         _cursors[cursor] = docs
     return docs
@@ -106,8 +135,9 @@ def install():
                 if passthrough():
                     return await original(self, *args, **kwargs)
                 key = ("mongo", self.full_name, name, _args(args, kwargs))
-                return await io_call(f"mongo.{name}", key, lambda: original(self, *args, **kwargs), encode=_encode,
-                                     decode=_decode)
+                return await io_call(
+                    f"mongo.{name}", key, lambda: original(self, *args, **kwargs), encode=_encode, decode=_decode
+                )
 
             method.__wrapped__ = original
             return method

@@ -26,7 +26,7 @@ docker run -d --name deja-mysql -p 127.0.0.1:53306:3306 -e MYSQL_ROOT_PASSWORD=d
 ## Before a pull request
 
 ```bash
-ruff check src tests          # lint (configured in pyproject.toml)
+ruff check src tests && ruff format src tests gallery   # lint and format (configured in pyproject.toml)
 python -m pytest -q           # the suite; please run it on the oldest and newest supported Python if you can
 python -m gallery.acceptance --recordings 2 --replays 20   # the race gallery still records and replays
 ```

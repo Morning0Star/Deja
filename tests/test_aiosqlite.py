@@ -47,8 +47,9 @@ def counter_app(path):
 
 def test_aiosqlite_lost_update_found_and_replayed_without_the_file(tmp_path):
     db = str(tmp_path / "app.db")
-    path, responses = record_concurrently(counter_app(db), [("POST", "/visit"), ("POST", "/visit")],
-                                          str(tmp_path / "s.deja"))
+    path, responses = record_concurrently(
+        counter_app(db), [("POST", "/visit"), ("POST", "/visit")], str(tmp_path / "s.deja")
+    )
     assert [r.json()["n"] for r in responses] == [1, 1], "two visits, counted once"
     a = analyze(*read(path))
     c = a["conflicts"][0]

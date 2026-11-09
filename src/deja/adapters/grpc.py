@@ -105,8 +105,16 @@ def install():
             async def real():
                 return [m async for m in original(self, request, **kwargs)]
 
-            return _StreamCall(io_call("grpc.stream", key, real, encode=lambda ms: [_encode(m) for m in ms],
-                                       decode=lambda vs: [decode_one(v) for v in vs or []], default=list))
+            return _StreamCall(
+                io_call(
+                    "grpc.stream",
+                    key,
+                    real,
+                    encode=lambda ms: [_encode(m) for m in ms],
+                    decode=lambda vs: [decode_one(v) for v in vs or []],
+                    default=list,
+                )
+            )
 
         __call__.__wrapped__ = original
         return __call__

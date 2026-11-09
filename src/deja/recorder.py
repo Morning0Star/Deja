@@ -31,6 +31,8 @@ background = contextvars.ContextVar("deja_background", default=False)
 def in_scope(path) -> bool:
     """A request (q...) or a background task of the app (b...): what recording orders and the report explains."""
     return bool(path) and path[0] in "qb"
+
+
 CALL_KINDS: dict[str, str] = {}  # "METHOD host/path" pattern -> "read" | "write" | "ignore" (deja.calls)
 
 
@@ -61,8 +63,17 @@ def _detail(op, key):
             return {"isolation": key[1] if len(key) > 1 else "read_committed"}
         if op == "ws.send" and isinstance(key, tuple) and len(key) == 5:
             _, kind, text, data, code = key
-            what = text if text is not None else (f"<{len(data)} bytes>" if data is not None else
-                                                   f"close {code}" if kind == "websocket.close" else kind)
+            what = (
+                text
+                if text is not None
+                else (
+                    f"<{len(data)} bytes>"
+                    if data is not None
+                    else f"close {code}"
+                    if kind == "websocket.close"
+                    else kind
+                )
+            )
             return {"message": str(what)[:2000]}
         if op.startswith("mongo.") and isinstance(key, tuple) and len(key) == 4:
             from .codec import decode
@@ -74,9 +85,11 @@ def _detail(op, key):
             from .codec import decode
 
             params = decode(key[3])
-            keep = {k: (v if not isinstance(v, (bytes, bytearray)) else f"<{len(v)} bytes>")
-                    for k, v in (params or {}).items() if k in ("Bucket", "Key", "Prefix", "TableName", "Key",
-                                                                 "QueueUrl", "ConditionExpression")}
+            keep = {
+                k: (v if not isinstance(v, (bytes, bytearray)) else f"<{len(v)} bytes>")
+                for k, v in (params or {}).items()
+                if k in ("Bucket", "Key", "Prefix", "TableName", "Key", "QueueUrl", "ConditionExpression")
+            }
             return {"service": key[1], "operation": key[2], "params": keep}
         if op in ("grpc.call", "grpc.stream") and isinstance(key, tuple) and len(key) == 3:
             return {"method": key[1], "request_bytes": len(key[2] or b"")}
@@ -103,8 +116,11 @@ def _brief(value, depth=0):
     if t in (list, tuple, set, frozenset) or isinstance(value, (list, tuple, set, frozenset)):
         if depth >= 3 or len(value) > 50:
             return f"<{t.__name__} of {len(value)}>"
-        return encode(type(value)(_decoded_brief(x, depth) for x in value) if t is not set else
-                      [_decoded_brief(x, depth) for x in value])
+        return encode(
+            type(value)(_decoded_brief(x, depth) for x in value)
+            if t is not set
+            else [_decoded_brief(x, depth) for x in value]
+        )
     if isinstance(value, dict):
         if depth >= 3 or len(value) > 50:
             return f"<{t.__name__} of {len(value)}>"
@@ -287,8 +303,18 @@ class Recorder:
             elif item[0] == ev.TASK_GONE:
                 idmap.pop(item[1], None)
             elif item[0] == ev.IO_END:  # digest and readable details are computed here, off the hot path
-                out.append((item[0], item[1], item[2], _digest(item[3]), item[4], item[5],
-                            item[6] if len(item) > 6 else None, _detail(item[2], item[3])))
+                out.append(
+                    (
+                        item[0],
+                        item[1],
+                        item[2],
+                        _digest(item[3]),
+                        item[4],
+                        item[5],
+                        item[6] if len(item) > 6 else None,
+                        _detail(item[2], item[3]),
+                    )
+                )
             else:
                 out.append(item)
         return out
@@ -325,8 +351,16 @@ class Recorder:
             "catalog": {k: dict(v) for k, v in self.catalog.items()},
         }
 
-    _TIME_AT = {ev.BATCH: 2, ev.REQUEST: 7, ev.RESPONSE: 4, ev.IO_START: 3, ev.IO_END: 6, ev.TOUCH: 5, ev.FLAG: 3,
-                ev.NOTIFY: 5}
+    _TIME_AT = {
+        ev.BATCH: 2,
+        ev.REQUEST: 7,
+        ev.RESPONSE: 4,
+        ev.IO_START: 3,
+        ev.IO_END: 6,
+        ev.TOUCH: 5,
+        ev.FLAG: 3,
+        ev.NOTIFY: 5,
+    }
 
     def slice(self, t0: int, t1: int) -> list:
         """Events between perf_counter_ns ``t0`` and ``t1`` (each event takes the time of the latest timestamp before

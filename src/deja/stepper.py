@@ -100,8 +100,11 @@ class Stepper:
             return
         self.say(f"step {info.index}: {info.path} is about to run")
         frame = info.frame
-        self.say(f"  resumes at {frame.f_code.co_filename}:{frame.f_lineno} in {frame.f_code.co_name}" if frame
-                 else "  (starts now)")
+        self.say(
+            f"  resumes at {frame.f_code.co_filename}:{frame.f_lineno} in {frame.f_code.co_name}"
+            if frame
+            else "  (starts now)"
+        )
         while True:
             try:
                 cmd = self.ask("(deja) ").strip()

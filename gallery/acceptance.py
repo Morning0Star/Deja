@@ -59,8 +59,10 @@ def main():
     a = p.parse_args()
     import importlib
 
-    print(f"python {sys.version.split()[0]} {sys.platform}  recordings/app={a.recordings} (+{a.recordings} passing)"
-          f"  replays/recording={a.replays}")
+    print(
+        f"python {sys.version.split()[0]} {sys.platform}  recordings/app={a.recordings} (+{a.recordings} passing)"
+        f"  replays/recording={a.replays}"
+    )
     workdir = tempfile.mkdtemp(prefix="deja-acceptance-")
     ok_all = True
     for scenario in [a.only] if a.only else MODULES:
@@ -80,9 +82,11 @@ def main():
                         diverged.append(r.divergence)
             ok = same == total and followed == total
             ok_all &= ok
-            print(f"  {scenario:7s} {label}: bug {'reproduced' if expect else 'absent'} in {same}/{total} replays, "
-                  f"followed recording in {followed}/{total}  ({(time.perf_counter() - t0) / total * 1000:.0f} ms/replay)"
-                  f"  {'OK' if ok else 'FAIL'}")
+            print(
+                f"  {scenario:7s} {label}: bug {'reproduced' if expect else 'absent'} in {same}/{total} replays, "
+                f"followed recording in {followed}/{total}  ({(time.perf_counter() - t0) / total * 1000:.0f} ms/replay)"
+                f"  {'OK' if ok else 'FAIL'}"
+            )
             for d in diverged:
                 print("     ", d)
     shutil.rmtree(workdir, ignore_errors=True)

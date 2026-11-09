@@ -26,8 +26,9 @@ def orders_app(servers, topic):
         @contextlib.asynccontextmanager
         async def lifespan(app):
             state["producer"] = AIOKafkaProducer(bootstrap_servers=servers)
-            consumer = AIOKafkaConsumer(topic, bootstrap_servers=servers, auto_offset_reset="earliest",
-                                        group_id=f"g-{topic}")
+            consumer = AIOKafkaConsumer(
+                topic, bootstrap_servers=servers, auto_offset_reset="earliest", group_id=f"g-{topic}"
+            )
             await state["producer"].start()
             await consumer.start()
 
@@ -63,8 +64,9 @@ def orders_app(servers, topic):
 
 def test_kafka_message_to_a_background_consumer_replays_without_the_broker(tmp_path):
     topic = f"orders-{uuid.uuid4().hex[:8]}"
-    path, responses = record_concurrently(orders_app(LIVE, topic), [("GET", "/seen/o1"), ("POST", "/order/o1")],
-                                          str(tmp_path / "k.deja"))
+    path, responses = record_concurrently(
+        orders_app(LIVE, topic), [("GET", "/seen/o1"), ("POST", "/order/o1")], str(tmp_path / "k.deja")
+    )
     assert responses[0].json() == {"seen": True} and responses[1].json() == {"partition": 0, "first": True}
     r = replay(path, orders_app(DEAD, topic), deadline_s=5)
     assert r.followed and r.same_responses, r.summary()

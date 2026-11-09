@@ -32,9 +32,15 @@ def _body_text(kw):
 
 
 def _encode(resp):
-    return {"__t": "aiohttp", "status": resp.status, "reason": resp.reason,
-            "headers": [[k, v] for k, v in resp.headers.items()], "url": str(resp.url), "method": resp.method,
-            "body": base64.b64encode(resp._body or b"").decode()}
+    return {
+        "__t": "aiohttp",
+        "status": resp.status,
+        "reason": resp.reason,
+        "headers": [[k, v] for k, v in resp.headers.items()],
+        "url": str(resp.url),
+        "method": resp.method,
+        "body": base64.b64encode(resp._body or b"").decode(),
+    }
 
 
 class _Content:
@@ -46,7 +52,7 @@ class _Content:
     async def read(self, n=-1):
         if n is None or n < 0:
             n = len(self._body) - self._pos
-        out = self._body[self._pos:self._pos + n]
+        out = self._body[self._pos : self._pos + n]
         self._pos += len(out)
         return out
 
@@ -115,8 +121,9 @@ class FakeClientResponse:
 
     def raise_for_status(self):
         if self.status >= 400:
-            raise aiohttp.ClientResponseError(self.request_info, (), status=self.status, message=self.reason or "",
-                                              headers=self.headers)
+            raise aiohttp.ClientResponseError(
+                self.request_info, (), status=self.status, message=self.reason or "", headers=self.headers
+            )
 
     def release(self):
         pass
@@ -143,8 +150,11 @@ def install():
         async def _request(self, method, str_or_url, **kwargs):
             if passthrough():
                 return await original(self, method, str_or_url, **kwargs)
-            url = str(URL(str(self._base_url or "")).join(URL(str(str_or_url)))) if getattr(self, "_base_url", None) \
+            url = (
+                str(URL(str(self._base_url or "")).join(URL(str(str_or_url))))
+                if getattr(self, "_base_url", None)
                 else str(str_or_url)
+            )
             if kwargs.get("params"):
                 url = str(URL(url).update_query(kwargs["params"]))
 
@@ -153,8 +163,9 @@ def install():
                 await resp.read()  # recorded whole; the app's later read() returns the same bytes
                 return resp
 
-            return await io_call("http.send", (method.upper(), url, _body_text(kwargs)), real, encode=_encode,
-                                 decode=_decode)
+            return await io_call(
+                "http.send", (method.upper(), url, _body_text(kwargs)), real, encode=_encode, decode=_decode
+            )
 
         _request.__wrapped__ = original
         return _request

@@ -11,15 +11,26 @@ from deja.fileformat import read
 
 
 # ---------------------------------------------------------------------- SQL rules
-@pytest.mark.parametrize("sql,params,expected", [
-    ("SELECT balance FROM gallery_wallet WHERE id = 1", [], ("gallery_wallet[id=1]", "read")),
-    ("select price from bench_items where id = $1", [42], ("bench_items[id=42]", "read")),
-    ("SELECT EXISTS (SELECT 1 FROM gallery_users WHERE username = $1)", ["ada"], ("gallery_users[username=ada]", "read")),
-    ("UPDATE gallery_wallet SET balance = $1, charged = charged + $2 WHERE id = 1", [0, 100], ("gallery_wallet[id=1]", "write")),
-    ("INSERT INTO gallery_users (username) VALUES ($1)", ["ada"], ("gallery_users[username=ada]", "write")),
-    ("DELETE FROM sessions WHERE token = 'abc'", [], ("sessions[token=abc]", "write")),
-    ("TRUNCATE gallery_users", [], ("gallery_users", "write")),
-])
+@pytest.mark.parametrize(
+    "sql,params,expected",
+    [
+        ("SELECT balance FROM gallery_wallet WHERE id = 1", [], ("gallery_wallet[id=1]", "read")),
+        ("select price from bench_items where id = $1", [42], ("bench_items[id=42]", "read")),
+        (
+            "SELECT EXISTS (SELECT 1 FROM gallery_users WHERE username = $1)",
+            ["ada"],
+            ("gallery_users[username=ada]", "read"),
+        ),
+        (
+            "UPDATE gallery_wallet SET balance = $1, charged = charged + $2 WHERE id = 1",
+            [0, 100],
+            ("gallery_wallet[id=1]", "write"),
+        ),
+        ("INSERT INTO gallery_users (username) VALUES ($1)", ["ada"], ("gallery_users[username=ada]", "write")),
+        ("DELETE FROM sessions WHERE token = 'abc'", [], ("sessions[token=abc]", "write")),
+        ("TRUNCATE gallery_users", [], ("gallery_users", "write")),
+    ],
+)
 def test_sql_rules(sql, params, expected):
     (t,) = sql_touches(sql, params)
     assert (t["resource"], t["kind"]) == expected
@@ -47,38 +58,58 @@ def _req(rid, path):
 
 
 def test_lost_update_story_and_moments():
-    events = [_req(1, "/buy"), _req(2, "/buy"),
-              _touch("q1", "wallet", "read", 100, 1_000_000), _touch("q2", "wallet", "read", 100, 2_000_000),
-              _touch("q1", "wallet", "write", 0, 3_000_000), _touch("q2", "wallet", "write", 0, 4_000_000)]
+    events = [
+        _req(1, "/buy"),
+        _req(2, "/buy"),
+        _touch("q1", "wallet", "read", 100, 1_000_000),
+        _touch("q2", "wallet", "read", 100, 2_000_000),
+        _touch("q1", "wallet", "write", 0, 3_000_000),
+        _touch("q2", "wallet", "write", 0, 4_000_000),
+    ]
     a = analyze({"reason": "charged 200", "labels": {"POST /buy": "purchase"}}, events)
     (c,) = a["conflicts"]
     assert c["pattern"] == "lost-update" and c["resource"] == "wallet"
     assert "Two purchase requests (A and B)" in a["story"]
     assert "B saved last and overwrote A's change" in a["story"] and "The app reported: charged 200" in a["story"]
     assert [m["text"] for m in a["moments"]] == [
-        "A reads wallet → 100", "B reads wallet → 100", "A writes wallet (0)", "B writes wallet (0)"]
+        "A reads wallet → 100",
+        "B reads wallet → 100",
+        "A writes wallet (0)",
+        "B writes wallet (0)",
+    ]
     assert a["moments"][1]["warning"]
 
 
 def test_check_then_act():
-    events = [_req(1, "/signup"), _req(2, "/signup"),
-              _touch("q1", "users[ada]", "read", False, 1), _touch("q2", "users[ada]", "read", False, 2),
-              _touch("q1", "users[ada]", "write", "ada", 3), _touch("q2", "users[ada]", "write", "ada", 4)]
+    events = [
+        _req(1, "/signup"),
+        _req(2, "/signup"),
+        _touch("q1", "users[ada]", "read", False, 1),
+        _touch("q2", "users[ada]", "read", False, 2),
+        _touch("q1", "users[ada]", "write", "ada", 3),
+        _touch("q2", "users[ada]", "write", "ada", 4),
+    ]
     (c,) = analyze({}, events)["conflicts"]
     assert c["pattern"] == "check-then-act"
 
 
 def test_serial_requests_are_not_a_conflict():
-    events = [_req(1, "/buy"), _req(2, "/buy"),
-              _touch("q1", "wallet", "read", 100, 1), _touch("q1", "wallet", "write", 0, 2),
-              _touch("q2", "wallet", "read", 0, 3), _touch("q2", "wallet", "write", 0, 4)]
+    events = [
+        _req(1, "/buy"),
+        _req(2, "/buy"),
+        _touch("q1", "wallet", "read", 100, 1),
+        _touch("q1", "wallet", "write", 0, 2),
+        _touch("q2", "wallet", "read", 0, 3),
+        _touch("q2", "wallet", "write", 0, 4),
+    ]
     a = analyze({}, events)
     assert a["conflicts"] == [] and "no conflicting" in a["story"]
 
 
 # ---------------------------------------------------------------------- real gallery recordings
-@pytest.mark.parametrize("scenario,pattern", [("wallet", "lost-update"), ("likes", "lost-update"),
-                                              ("signup", "check-then-act")])
+@pytest.mark.parametrize(
+    "scenario,pattern", [("wallet", "lost-update"), ("likes", "lost-update"), ("signup", "check-then-act")]
+)
 def test_gallery_failures_are_explained(tmp_path, scenario, pattern):
     from gallery import stress
 

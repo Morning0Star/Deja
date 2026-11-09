@@ -13,7 +13,13 @@ def make_app():
 
     @app.get("/stamp")
     async def stamp():
-        return {"dt": dt.now().isoformat(), "mod": datetime.datetime.utcnow().isoformat(), "day": date.today().isoformat(),
-                "t": time(), "real": isinstance(datetime.datetime(2020, 1, 1), dt) and type(dt.now()) is type(datetime.datetime(2020, 1, 1))}
+        return {
+            "dt": dt.now().isoformat(),
+            "mod": datetime.datetime.utcnow().isoformat(),
+            "day": date.today().isoformat(),
+            "t": time(),
+            "real": isinstance(datetime.datetime(2020, 1, 1), dt)
+            and type(dt.now()) is type(datetime.datetime(2020, 1, 1)),
+        }
 
     return app

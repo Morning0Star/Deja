@@ -36,7 +36,9 @@ def test_report_embeds_story_moments_and_requests():
 
 
 def test_embedded_data_cannot_break_out_of_the_script_tag():
-    events = sample_events() + [(ev.REQUEST, 3, "r0", "GET", "/x</script><script>alert(1)</script>", [], b"", 7_000_000)]
+    events = sample_events() + [
+        (ev.REQUEST, 3, "r0", "GET", "/x</script><script>alert(1)</script>", [], b"", 7_000_000)
+    ]
     page = build({}, events, source="x.deja")
     assert "</script><script>alert(1)" not in page
     assert any("alert(1)" in r["path"] for r in embedded(page)["requests"])

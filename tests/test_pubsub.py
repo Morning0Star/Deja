@@ -57,8 +57,9 @@ def jobs_app(url):
 
 
 def test_pubsub_message_to_a_background_listener_replays_without_redis(tmp_path):
-    path, responses = record_concurrently(jobs_app(URL), [("GET", "/wait/j1"), ("POST", "/submit/j1")],
-                                          str(tmp_path / "ps.deja"))
+    path, responses = record_concurrently(
+        jobs_app(URL), [("GET", "/wait/j1"), ("POST", "/submit/j1")], str(tmp_path / "ps.deja")
+    )
     assert responses[0].json()["done"] is True
     for _ in range(3):
         r = replay(path, jobs_app(DEAD), deadline_s=5)

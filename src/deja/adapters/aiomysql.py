@@ -85,8 +85,9 @@ def _call(op, original):
     async def method(self, *args, **kwargs):
         if passthrough():
             return await original(self, *args, **kwargs)
-        return await io_call(op, (op,), lambda: original(self, *args, **kwargs), encode=lambda v: None,
-                             decode=lambda v: None)
+        return await io_call(
+            op, (op,), lambda: original(self, *args, **kwargs), encode=lambda v: None, decode=lambda v: None
+        )
 
     method.__wrapped__ = original
     return method
@@ -97,8 +98,9 @@ def _tx(op, original, opens):
         (_open.add if opens else _open.discard)(self)
         if passthrough():
             return await original(self, *args, **kwargs)
-        return await io_call(op, (op,), lambda: original(self, *args, **kwargs), encode=lambda v: None,
-                             decode=lambda v: None)
+        return await io_call(
+            op, (op,), lambda: original(self, *args, **kwargs), encode=lambda v: None, decode=lambda v: None
+        )
 
     method.__wrapped__ = original
     return method
@@ -237,8 +239,13 @@ def install():
         async def __aexit__(self, *exc):
             if passthrough():
                 return await original(self, *exc)
-            return await io_call("sql.release", ("sql.release",), lambda: original(self, *exc),
-                                 encode=lambda v: None, decode=lambda v: None)
+            return await io_call(
+                "sql.release",
+                ("sql.release",),
+                lambda: original(self, *exc),
+                encode=lambda v: None,
+                decode=lambda v: None,
+            )
 
         return __aexit__
 
@@ -247,6 +254,7 @@ def install():
     def make_create_pool(original):
         def create_pool(*args, **kwargs):
             if replaying():
+
                 async def fake():
                     return FakePool(kwargs.get("autocommit", False))
 
@@ -258,6 +266,7 @@ def install():
     def make_connect(original):
         def connect(*args, **kwargs):
             if replaying():
+
                 async def fake():
                     await io_call("sql.connect", ("sql.connect",), None)
                     return FakeConnection(kwargs.get("autocommit", False))

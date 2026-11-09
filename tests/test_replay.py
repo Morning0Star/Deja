@@ -9,8 +9,9 @@ from gallery import stress, wallet
 
 
 def record(tmp_path, scenario="wallet", trials=40):
-    asyncio.run(stress.run(scenario, trials, False, None, 60, str(tmp_path), record_passing=True),
-                loop_factory=recording_loop)
+    asyncio.run(
+        stress.run(scenario, trials, False, None, 60, str(tmp_path), record_passing=True), loop_factory=recording_loop
+    )
     fails = sorted(glob.glob(os.path.join(tmp_path, f"{scenario}-fail-*.deja")))
     passes = sorted(glob.glob(os.path.join(tmp_path, f"{scenario}-pass-*.deja")))
     assert fails and passes, "need at least one failing and one passing trial"
@@ -117,11 +118,17 @@ def test_hash_seed_is_recorded_and_replay_reruns_with_it(tmp_path, monkeypatch):
     monkeypatch.setenv("PYTHONHASHSEED", "0")
     # the CLI re-runs itself with the recording's seed: the child sees 123
     probe = tmp_path / "probe.py"
-    probe.write_text("import os\nclass App:\n    pass\ndef create_app():\n"
-                     "    open(os.environ['PROBE_OUT'], 'w').write(os.environ['PYTHONHASHSEED'])\n"
-                     "    async def app(scope, receive, send):\n        pass\n    return app\n")
+    probe.write_text(
+        "import os\nclass App:\n    pass\ndef create_app():\n"
+        "    open(os.environ['PROBE_OUT'], 'w').write(os.environ['PYTHONHASHSEED'])\n"
+        "    async def app(scope, receive, send):\n        pass\n    return app\n"
+    )
     out = tmp_path / "seen.txt"
     env = {**__import__("os").environ, "PROBE_OUT": str(out), "PYTHONPATH": str(tmp_path)}
-    subprocess.call([sys.executable, "-m", "deja.cli", "replay", str(path), "--app", "probe:create_app"], env=env,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.call(
+        [sys.executable, "-m", "deja.cli", "replay", str(path), "--app", "probe:create_app"],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     assert out.read_text() == "123"

@@ -31,19 +31,31 @@ def _encode(resp):
 
 def _decode(v):
     return httpx.Response(
-        v["status"], headers=v["headers"], content=base64.b64decode(v["content"]),
+        v["status"],
+        headers=v["headers"],
+        content=base64.b64decode(v["content"]),
         request=httpx.Request(v["method"], v["url"]),
     )
 
 
 def _encode_head(resp):
-    return {"__t": "httpx", "status": resp.status_code, "headers": [[k, v] for k, v in resp.headers.multi_items()],
-            "stream": True, "method": resp.request.method, "url": str(resp.request.url)}
+    return {
+        "__t": "httpx",
+        "status": resp.status_code,
+        "headers": [[k, v] for k, v in resp.headers.multi_items()],
+        "stream": True,
+        "method": resp.request.method,
+        "url": str(resp.request.url),
+    }
 
 
 def _decode_head(v):
-    return httpx.Response(v["status"], headers=v["headers"], stream=_ChunkStream(None, v["url"]),
-                          request=httpx.Request(v["method"], v["url"]))
+    return httpx.Response(
+        v["status"],
+        headers=v["headers"],
+        stream=_ChunkStream(None, v["url"]),
+        request=httpx.Request(v["method"], v["url"]),
+    )
 
 
 class _ChunkStream(httpx.AsyncByteStream):
@@ -80,9 +92,11 @@ class _ChunkStream(httpx.AsyncByteStream):
 
 async def _send_stream(client, original, request, args, kwargs, body):
     resp = await io_call(
-        "http.send", (request.method, str(request.url), body),
+        "http.send",
+        (request.method, str(request.url), body),
         lambda: original(client, request, *args, stream=True, **kwargs),
-        encode=_encode_head, decode=_decode_head,
+        encode=_encode_head,
+        decode=_decode_head,
     )
     if resp is not None and not isinstance(resp.stream, _ChunkStream):
         resp.stream = _ChunkStream(resp.stream, str(request.url))
@@ -101,9 +115,11 @@ def install():
             if stream:
                 return _send_stream(self, original, request, args, kwargs, body)
             return io_call(
-                "http.send", (request.method, str(request.url), body),
+                "http.send",
+                (request.method, str(request.url), body),
                 lambda: original(self, request, *args, stream=stream, **kwargs),
-                encode=_encode, decode=_decode,
+                encode=_encode,
+                decode=_decode,
             )
 
         send.__wrapped__ = original
@@ -123,8 +139,9 @@ def install():
                 resp.read()  # recorded whole (a sync stream is replayed in one piece)
                 return resp
 
-            return io_call_sync("http.send", (request.method, str(request.url), body), real, encode=_encode,
-                                decode=_decode)
+            return io_call_sync(
+                "http.send", (request.method, str(request.url), body), real, encode=_encode, decode=_decode
+            )
 
         send.__wrapped__ = original
         return send

@@ -93,8 +93,9 @@ def test_httpx_stream_replays_chunk_by_chunk_without_the_network(tmp_path):
     def unreachable(request):
         raise AssertionError("replay must not call the upstream")
 
-    path, responses = record_concurrently(token_app(upstream), [("GET", "/ask"), ("GET", "/ask")],
-                                          str(tmp_path / "stream.deja"))
+    path, responses = record_concurrently(
+        token_app(upstream), [("GET", "/ask"), ("GET", "/ask")], str(tmp_path / "stream.deja")
+    )
     bodies = [r.json() for r in responses]
     assert [b["text"] for b in bodies] == ["Hello there"] * 2 and calls == ["/v1/stream"] * 2
     ops = [e[2] for e in read(path)[1] if e[0] == "O"]
@@ -104,8 +105,9 @@ def test_httpx_stream_replays_chunk_by_chunk_without_the_network(tmp_path):
         assert r.followed and r.same_responses, r.summary()
 
 
-pg = pytest.mark.skipif(not reachable("127.0.0.1", int(PG_DSN.rsplit(":", 1)[1].split("/")[0])),
-                        reason="test Postgres not running")
+pg = pytest.mark.skipif(
+    not reachable("127.0.0.1", int(PG_DSN.rsplit(":", 1)[1].split("/")[0])), reason="test Postgres not running"
+)
 
 
 def notify_app(dsn):
@@ -151,8 +153,9 @@ def notify_app(dsn):
 
 @pg
 def test_listen_notify_replays_without_the_database(tmp_path):
-    path, responses = record_concurrently(notify_app(PG_DSN), [("GET", "/wait"), ("POST", "/send")],
-                                          str(tmp_path / "notify.deja"))
+    path, responses = record_concurrently(
+        notify_app(PG_DSN), [("GET", "/wait"), ("POST", "/send")], str(tmp_path / "notify.deja")
+    )
     assert responses[0].json() == {"got": "order-7 paid"}, [r.text for r in responses]
     for _ in range(3):
         r = replay(path, notify_app(DEAD_PORT_DSN), deadline_s=5)

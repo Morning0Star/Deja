@@ -52,9 +52,20 @@ def test_codec_round_trip():
     import decimal
     import uuid
 
-    values = [None, 1, 2.5, "x", b"\x00", dt.datetime(2026, 11, 7, 1, 2, 3), dt.date(2026, 1, 1),
-              decimal.Decimal("10.50"), uuid.uuid4(), [1, (2, 3)], {"a": [1]},
-              codec.FakeRecord(["id", "name"], [1, "ada"])]
+    values = [
+        None,
+        1,
+        2.5,
+        "x",
+        b"\x00",
+        dt.datetime(2026, 11, 7, 1, 2, 3),
+        dt.date(2026, 1, 1),
+        decimal.Decimal("10.50"),
+        uuid.uuid4(),
+        [1, (2, 3)],
+        {"a": [1]},
+        codec.FakeRecord(["id", "name"], [1, "ada"]),
+    ]
     for v in values:
         assert codec.decode(json.loads(json.dumps(codec.encode(v)))) == v
     rec = codec.decode(codec.encode(codec.FakeRecord(["id", "name"], [1, "ada"])))
@@ -142,8 +153,9 @@ def test_redis_lost_update_replays_without_redis(tmp_path):
 
         return app
 
-    path, responses = record_requests(factory, [("POST", "/reset"), ("POST", "/view"), ("POST", "/view"),
-                                                ("GET", "/count")], tmp_path)
+    path, responses = record_requests(
+        factory, [("POST", "/reset"), ("POST", "/view"), ("POST", "/view"), ("GET", "/count")], tmp_path
+    )
     assert responses[-1].json() == {"views": 2}
     ops = [e.op for q in Schedule.load(path).io.values() for e in q]
     assert ops.count("redis.cmd") >= 6, ops  # set, get+set twice, get
@@ -163,8 +175,9 @@ def test_changed_query_is_reported(tmp_path):
 
         @app.get("/quote")
         async def quote():
-            async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200)),
-                                         base_url="http://pricing") as c:
+            async with httpx.AsyncClient(
+                transport=httpx.MockTransport(lambda r: httpx.Response(200)), base_url="http://pricing"
+            ) as c:
                 await c.get("/price?currency=EUR")  # different request than recorded
             return {"quoted": 0}
 

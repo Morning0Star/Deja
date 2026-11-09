@@ -37,8 +37,16 @@ def _real_execute(original, original_fetchall):
             cols = [d[0] for d in self.description] if self.description else None
             return cols, self.rowcount, self.lastrowid, None
 
-        await _dbapi.run(OP, FLAVOR, self, sql, parameters, lambda: original(self, sql, parameters or []),
-                         lambda: original_fetchall(self), describe)
+        await _dbapi.run(
+            OP,
+            FLAVOR,
+            self,
+            sql,
+            parameters,
+            lambda: original(self, sql, parameters or []),
+            lambda: original_fetchall(self),
+            describe,
+        )
         return self
 
     execute.__wrapped__ = original
@@ -215,8 +223,13 @@ def install():
         async def cursor(self):
             if passthrough():
                 return await original.__wrapped__(self)
-            return await io_call("sql.cursor", ("sql.cursor",), lambda: original.__wrapped__(self),
-                                 encode=lambda v: None, decode=lambda v: None)
+            return await io_call(
+                "sql.cursor",
+                ("sql.cursor",),
+                lambda: original.__wrapped__(self),
+                encode=lambda v: None,
+                decode=lambda v: None,
+            )
 
         return cursor
 

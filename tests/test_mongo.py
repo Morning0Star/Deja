@@ -50,8 +50,9 @@ def signup_app(url):
 
 
 def test_mongo_check_then_insert_found_and_replayed(tmp_path):
-    path, responses = record_concurrently(signup_app(URL), [("POST", "/signup/ada@x"), ("POST", "/signup/ada@x")],
-                                          str(tmp_path / "m.deja"))
+    path, responses = record_concurrently(
+        signup_app(URL), [("POST", "/signup/ada@x"), ("POST", "/signup/ada@x")], str(tmp_path / "m.deja")
+    )
     assert [r.json()["ok"] for r in responses] == [True, True], "two accounts for one email"
     assert responses[0].json()["id_is_object_id"] == "ObjectId"
     a = analyze(*read(path))

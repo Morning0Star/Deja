@@ -37,8 +37,9 @@ def without(header, events, removed: set):
 
 def _ok(header, events, factory, keep, recorded, deadline_s):
     r = replay(Schedule(header, events), factory, deadline_s=deadline_s)
-    return r.followed and all(r.replayed.get(int(q[1:])) == recorded.get(int(q[1:])) for q in keep
-                              if q[0] == "q" and int(q[1:]) in recorded)
+    return r.followed and all(
+        r.replayed.get(int(q[1:])) == recorded.get(int(q[1:])) for q in keep if q[0] == "q" and int(q[1:]) in recorded
+    )
 
 
 def shrink(recording: str, app_factory, out: str, deadline_s: float = 10.0) -> dict:

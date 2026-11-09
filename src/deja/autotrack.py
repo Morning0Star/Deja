@@ -50,9 +50,16 @@ log = logging.getLogger("deja")
 PLAIN = COPIES  # exact types that get a tracked copy
 MAX_FUNCTIONS = 2000
 SCALARS = (int, float, complex, str, bytes, bool, type(None), tuple, frozenset)
-_LIBRARY_DIRS = tuple(os.path.normcase(os.path.abspath(p)) for p in {
-    sysconfig.get_paths().get("stdlib"), sysconfig.get_paths().get("platstdlib"),
-    sysconfig.get_paths().get("purelib"), sysconfig.get_paths().get("platlib")} if p)
+_LIBRARY_DIRS = tuple(
+    os.path.normcase(os.path.abspath(p))
+    for p in {
+        sysconfig.get_paths().get("stdlib"),
+        sysconfig.get_paths().get("platstdlib"),
+        sysconfig.get_paths().get("purelib"),
+        sysconfig.get_paths().get("platlib"),
+    }
+    if p
+)
 _DEJA_DIR = os.path.normcase(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -242,7 +249,7 @@ class _Reach:
             return self._methods(type(v))
         if isinstance(v, (dict, list, tuple)) and len(v) <= 200:  # a table of handlers: {"orders": handle_order}
             out = []
-            for x in (v.values() if isinstance(v, dict) else v):
+            for x in v.values() if isinstance(v, dict) else v:
                 f = _function(x) if callable(x) else None
                 if f is not None:
                     out.append(f)
@@ -472,9 +479,11 @@ def _monitor(reach, wanted=ALL):
             mon.register_callback(tid, mon.events.PY_RETURN, _on_return)
             break
         if _tool is None:
-            log.warning("deja: every sys.monitoring tool slot is taken (a debugger, coverage or a profiler?); "
-                        "module variables %s are not tracked", ", ".join(sorted(
-                            label for t in targets.values() for label in t.values())))
+            log.warning(
+                "deja: every sys.monitoring tool slot is taken (a debugger, coverage or a profiler?); "
+                "module variables %s are not tracked",
+                ", ".join(sorted(label for t in targets.values() for label in t.values())),
+            )
             return []
     for fn in reach.functions:
         g = fn.__globals__
@@ -496,8 +505,9 @@ def _monitor(reach, wanted=ALL):
                     elif want[ins.argval] not in _containers:  # a container's reads are reported by the container
                         r.append((ins.argval, want[ins.argval]))
             if lines:
-                _lines[code] = {ln: (g, tuple(dict.fromkeys(r)), tuple(dict.fromkeys(w)))
-                                for ln, (r, w) in lines.items()}
+                _lines[code] = {
+                    ln: (g, tuple(dict.fromkeys(r)), tuple(dict.fromkeys(w))) for ln, (r, w) in lines.items()
+                }
                 mon.set_local_events(_tool, code, mon.events.LINE | mon.events.PY_RETURN)
     return sorted({label for t in targets.values() for label in t.values()})
 
@@ -527,8 +537,13 @@ def prepare(app, track=True, rules=ALL) -> tuple:
     except Exception:
         log.warning("deja: could not rebind clock names in the app", exc_info=True)
     tracked = auto_track(app, reach, rules) if track else []
-    log.info("deja: prepared the app in %.0f ms (%d functions, %d modules; tracking %s)",
-             1000 * (time.perf_counter() - t0), len(reach.functions), len(reach.modules), ", ".join(tracked) or "nothing")
+    log.info(
+        "deja: prepared the app in %.0f ms (%d functions, %d modules; tracking %s)",
+        1000 * (time.perf_counter() - t0),
+        len(reach.functions),
+        len(reach.modules),
+        ", ".join(tracked) or "nothing",
+    )
     return tracked, source
 
 

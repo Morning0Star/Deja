@@ -70,9 +70,14 @@ async def run(scenario, trials, safe, url, stagger_ms, record_dir=None, record_p
             if rec and (r["violated"] or record_passing):
                 os.makedirs(record_dir, exist_ok=True)
                 kind = "fail" if r["violated"] else "pass"
-                rec.dump(os.path.join(record_dir, f"{scenario}-{kind}-trial{i:04d}.deja"), since=marker,
-                         reason=f"invariant {'violated' if r['violated'] else 'held'}: {r['detail']}",
-                         scenario=scenario, safe=safe, violated=r["violated"])
+                rec.dump(
+                    os.path.join(record_dir, f"{scenario}-{kind}-trial{i:04d}.deja"),
+                    since=marker,
+                    reason=f"invariant {'violated' if r['violated'] else 'held'}: {r['detail']}",
+                    scenario=scenario,
+                    safe=safe,
+                    violated=r["violated"],
+                )
     finally:
         await client.aclose()
         if lifespan:
@@ -90,16 +95,21 @@ def main():
     p.add_argument("--stagger-ms", type=float, default=float(os.environ.get("DEJA_GALLERY_STAGGER_MS", "60")))
     a = p.parse_args()
     store = "postgres" if os.environ.get("DEJA_PG_DSN") else "memory"
-    print(f"python {sys.version.split()[0]} {sys.platform} store={store} io<= {os.environ.get('DEJA_GALLERY_IO_MS', '3')} ms "
-          f"stagger<= {a.stagger_ms} ms safe={a.safe}")
+    print(
+        f"python {sys.version.split()[0]} {sys.platform} store={store} io<= {os.environ.get('DEJA_GALLERY_IO_MS', '3')} ms "
+        f"stagger<= {a.stagger_ms} ms safe={a.safe}"
+    )
     for name in SCENARIOS if a.scenario == "all" else [a.scenario]:
         loop_factory = None
         if a.record:
             from deja import recording_loop as loop_factory
-        hits, med, example = asyncio.run(run(name, a.trials, a.safe, a.url, a.stagger_ms, a.record),
-                                         loop_factory=loop_factory)
-        print(f"  {name:7s} violated {hits:4d}/{a.trials} ({hits / a.trials:6.1%})  median trial {med:6.1f} ms"
-              + (f"  e.g. {example}" if example else ""))
+        hits, med, example = asyncio.run(
+            run(name, a.trials, a.safe, a.url, a.stagger_ms, a.record), loop_factory=loop_factory
+        )
+        print(
+            f"  {name:7s} violated {hits:4d}/{a.trials} ({hits / a.trials:6.1%})  median trial {med:6.1f} ms"
+            + (f"  e.g. {example}" if example else "")
+        )
 
 
 if __name__ == "__main__":

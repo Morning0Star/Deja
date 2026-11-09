@@ -49,6 +49,10 @@ def test_exported_test_fails_on_the_race_and_passes_on_the_fix(tmp_path):
         target = tests / "test_race.py"
         export_test(path, spec, str(target))
         assert (tests / "recordings" / "buy.deja").exists()
-        code = subprocess.call([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", str(target)],
-                               env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        code = subprocess.call(
+            [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", str(target)],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         assert code == expect, spec

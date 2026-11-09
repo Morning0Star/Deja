@@ -108,7 +108,9 @@ class _RecordingMixin:
 
         def done(f):
             if f.cancelled():
-                rec.io_end(path, adapters.EXECUTOR_OP, key, "err", {"__t": "exc", "type": "asyncio:CancelledError", "msg": ""})
+                rec.io_end(
+                    path, adapters.EXECUTOR_OP, key, "err", {"__t": "exc", "type": "asyncio:CancelledError", "msg": ""}
+                )
             elif f.exception() is not None:
                 rec.io_end(path, adapters.EXECUTOR_OP, key, "err", codec.encode_exc(f.exception()))
             else:
@@ -123,8 +125,10 @@ class _RecordingMixin:
     # ------------------------------------------------------------------ the hook
     def _run_once(self):
         sched_count = len(self._scheduled)
-        if (sched_count > base_events._MIN_SCHEDULED_TIMER_HANDLES and
-                self._timer_cancelled_count / sched_count > base_events._MIN_CANCELLED_TIMER_HANDLES_FRACTION):
+        if (
+            sched_count > base_events._MIN_SCHEDULED_TIMER_HANDLES
+            and self._timer_cancelled_count / sched_count > base_events._MIN_CANCELLED_TIMER_HANDLES_FRACTION
+        ):
             new_scheduled = []
             for handle in self._scheduled:
                 if handle._cancelled:
@@ -202,7 +206,8 @@ class _RecordingMixin:
                     dt = self.time() - t0
                     if dt >= self.slow_callback_duration:
                         base_events.logger.warning(
-                            "Executing %s took %.3f seconds", base_events._format_handle(handle), dt)
+                            "Executing %s took %.3f seconds", base_events._format_handle(handle), dt
+                        )
                 finally:
                     self._current_handle = None
             else:
@@ -217,6 +222,7 @@ class RecordingSelectorLoop(_RecordingMixin, asyncio.SelectorEventLoop):
 
 
 if sys.platform == "win32":
+
     class RecordingProactorLoop(_RecordingMixin, asyncio.ProactorEventLoop):
         def __init__(self, proactor=None, recorder: Recorder | None = None):
             super().__init__(proactor)

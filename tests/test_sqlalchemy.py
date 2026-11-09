@@ -20,8 +20,9 @@ from sqlalchemy import Integer, select  # noqa: E402
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column  # noqa: E402
 
-pytestmark = pytest.mark.skipif(not reachable("127.0.0.1", int(PG_DSN.rsplit(":", 1)[1].split("/")[0])),
-                                reason="test Postgres not running")
+pytestmark = pytest.mark.skipif(
+    not reachable("127.0.0.1", int(PG_DSN.rsplit(":", 1)[1].split("/")[0])), reason="test Postgres not running"
+)
 
 
 class Base(DeclarativeBase):
@@ -94,8 +95,9 @@ def record_concurrently(factory, calls, path):
 
 
 def test_sqlalchemy_orm_lost_update_replays_without_the_database(tmp_path):
-    path, responses = record_concurrently(orm_app(PG_DSN), [("POST", "/buy"), ("POST", "/buy")],
-                                          str(tmp_path / "orm.deja"))
+    path, responses = record_concurrently(
+        orm_app(PG_DSN), [("POST", "/buy"), ("POST", "/buy")], str(tmp_path / "orm.deja")
+    )
     bodies = [r.json() for r in responses]
     assert all(r.status_code == 200 for r in responses), bodies
 
@@ -139,8 +141,9 @@ def raw_app(dsn):
             pool = state["pool"]
             status = await pool.copy_records_to_table("deja_copy", records=[(1, "ada"), (2, "bob"), (3, "cy")])
             buf = io.BytesIO()
-            await pool.copy_from_query("SELECT name FROM deja_copy WHERE id > $1 ORDER BY id", 1, output=buf,
-                                       format="csv")
+            await pool.copy_from_query(
+                "SELECT name FROM deja_copy WHERE id > $1 ORDER BY id", 1, output=buf, format="csv"
+            )
             async with pool.acquire() as conn, conn.transaction():
                 names = [r["name"] async for r in conn.cursor("SELECT name FROM deja_copy ORDER BY id", prefetch=2)]
                 cur = await conn.cursor("SELECT id FROM deja_copy ORDER BY id")
@@ -155,8 +158,12 @@ def raw_app(dsn):
 
 def test_cursors_and_bulk_copy_replay(tmp_path):
     path, responses = record_concurrently(raw_app(PG_DSN), [("POST", "/load")], str(tmp_path / "copy.deja"))
-    assert responses[0].json() == {"status": "COPY 3", "csv": "bob\ncy\n", "names": ["ada", "bob", "cy"],
-                                   "rest": [2, 3]}
+    assert responses[0].json() == {
+        "status": "COPY 3",
+        "csv": "bob\ncy\n",
+        "names": ["ada", "bob", "cy"],
+        "rest": [2, 3],
+    }
     r = replay(path, raw_app(DEAD_PORT_DSN), deadline_s=10)
     assert r.followed and r.same_responses, r.summary()
     kinds = {(t["kind"], t["resource"]) for t in analyze(*read(path))["touches"]}

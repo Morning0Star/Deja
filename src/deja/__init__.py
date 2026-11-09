@@ -20,5 +20,15 @@ from .recorder import Recorder  # noqa: E402
 from .scope import scope  # noqa: E402
 from .track import track  # noqa: E402
 
-__all__ = ["DejaMiddleware", "Recorder", "calls", "flag", "labels", "recording_loop", "scope", "touch", "track",
-           "__version__"]
+__all__ = [
+    "DejaMiddleware",
+    "Recorder",
+    "calls",
+    "flag",
+    "labels",
+    "recording_loop",
+    "scope",
+    "touch",
+    "track",
+    "__version__",
+]

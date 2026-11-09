@@ -64,8 +64,15 @@ def _text(node, params):
     for p in list(copy.find_all(exp.Parameter)):
         ok, v = _param(p, params)
         if ok:
-            p.replace(exp.Literal.string(v) if isinstance(v, str) else exp.Literal.number(v) if isinstance(v, (int, float))
-                      else exp.Null() if v is None else exp.Literal.string(repr(v)))
+            p.replace(
+                exp.Literal.string(v)
+                if isinstance(v, str)
+                else exp.Literal.number(v)
+                if isinstance(v, (int, float))
+                else exp.Null()
+                if v is None
+                else exp.Literal.string(repr(v))
+            )
     return copy.sql(dialect="postgres")
 
 
@@ -405,8 +412,15 @@ def touches(sql: str, params: list):
 
     def add(table, kind, rows, where, match=None, where_node=None, **extra):
         for res, row, precise in _resources(table, rows, where):
-            t = {"resource": res, "kind": kind, "table": table, "rows": [row] if row else None,
-                 "where": where if precise or where_node is None else full(where_node), "precise": precise, **extra}
+            t = {
+                "resource": res,
+                "kind": kind,
+                "table": table,
+                "rows": [row] if row else None,
+                "where": where if precise or where_node is None else full(where_node),
+                "precise": precise,
+                **extra,
+            }
             if not precise and match is not None:
                 t["_match"] = match
             out.append(t)
@@ -430,14 +444,24 @@ def touches(sql: str, params: list):
             for res, row, precise in _resources(n, rows, cond):
                 if (res, cond) not in seen:
                     seen.add((res, cond))
-                    out.append({"resource": res, "kind": "read", "table": n, "rows": [row] if row else None,
-                                "where": cond if precise else full(where), "precise": precise, "lock": lock})
+                    out.append(
+                        {
+                            "resource": res,
+                            "kind": "read",
+                            "table": n,
+                            "rows": [row] if row else None,
+                            "where": cond if precise else full(where),
+                            "precise": precise,
+                            "lock": lock,
+                        }
+                    )
                     if sel is not None and any(sel.args.get(k) for k in ("joins", "limit", "offset", "having")):
                         out[-1]["partial"] = True  # rows also filtered by a join / LIMIT: "no WHERE" isn't "all"
                     first = sel.expressions[0] if sel is not None and len(sel.expressions) == 1 else None
                     first = first.this if isinstance(first, exp.Alias) else first
                     if isinstance(first, (exp.Count, exp.Exists)) or (
-                            isinstance(first, exp.Literal) and str(first.this) == "1"):
+                        isinstance(first, exp.Literal) and str(first.this) == "1"
+                    ):
                         out[-1]["existence"] = True  # count(*) / EXISTS / SELECT 1: 0, False or no row = none there
                     if sel is not None and len(sel.expressions) == 1 and isinstance(sel.expressions[0], exp.Column):
                         out[-1]["column"] = sel.expressions[0].name  # fetchval-style scalar: its value is this column
@@ -450,10 +474,19 @@ def touches(sql: str, params: list):
             keys = [_param(a, params) for a in f.expressions]
             key = ",".join(str(v) for ok, v in keys if ok) or "?"
             unlock = "unlock" in fname
-            out.append({"resource": f"advisory lock {key}", "kind": "write", "table": None, "rows": None,
-                        "where": None, "precise": True, "lock": True,
-                        "writes": {"(unlocked)" if unlock else "(locked)": True},
-                        "advisory": "try" if fname.startswith("pg_try") else "unlock" if unlock else "wait"})
+            out.append(
+                {
+                    "resource": f"advisory lock {key}",
+                    "kind": "write",
+                    "table": None,
+                    "rows": None,
+                    "where": None,
+                    "precise": True,
+                    "lock": True,
+                    "writes": {"(unlocked)" if unlock else "(locked)": True},
+                    "advisory": "try" if fname.startswith("pg_try") else "unlock" if unlock else "wait",
+                }
+            )
 
     if isinstance(tree, exp.Insert):
         target = tree.this.this if isinstance(tree.this, exp.Schema) else tree.this
@@ -484,8 +517,9 @@ def touches(sql: str, params: list):
                 t["guard"] = True  # read inside the statement that decides whether it inserts
         elif source is not None:
             reads(source)
-        add(table, "write", rows, None, writes=writes or None,
-            upsert=tree.args.get("conflict") is not None, insert=True)
+        add(
+            table, "write", rows, None, writes=writes or None, upsert=tree.args.get("conflict") is not None, insert=True
+        )
         return out
 
     if isinstance(tree, exp.Update):
@@ -497,8 +531,15 @@ def touches(sql: str, params: list):
                 ok, v = _param(a.expression, params)
                 writes[a.this.name] = v if ok else Expr(_text(a.expression, params))
         rows, where = _rows(tree.args.get("where"), {alias, table}, params)
-        add(table, "write", rows, where, _matcher(tree.args.get("where"), {alias, table}, params),
-            tree.args.get("where"), writes=writes)
+        add(
+            table,
+            "write",
+            rows,
+            where,
+            _matcher(tree.args.get("where"), {alias, table}, params),
+            tree.args.get("where"),
+            writes=writes,
+        )
         reads(tree, skip={table})
         return out
 
@@ -506,8 +547,15 @@ def touches(sql: str, params: list):
         table = _name(tree.this)
         names = {tree.this.alias_or_name, table}
         rows, where = _rows(tree.args.get("where"), names, params)
-        add(table, "write", rows, where, _matcher(tree.args.get("where"), names, params), tree.args.get("where"),
-            writes={"(deleted)": True})
+        add(
+            table,
+            "write",
+            rows,
+            where,
+            _matcher(tree.args.get("where"), names, params),
+            tree.args.get("where"),
+            writes={"(deleted)": True},
+        )
         return out
 
     if isinstance(tree, (exp.Select, exp.Union)) or tree.find(exp.Select):
@@ -515,8 +563,13 @@ def touches(sql: str, params: list):
         return out
 
     if isinstance(tree, exp.Copy) and isinstance(tree.this, exp.Table):  # COPY t FROM STDIN (bulk load) / TO STDOUT
-        add(_name(tree.this), "write" if tree.args.get("kind") else "read", None, None,
-            **({"writes": {"(bulk copy)": True}} if tree.args.get("kind") else {}))
+        add(
+            _name(tree.this),
+            "write" if tree.args.get("kind") else "read",
+            None,
+            None,
+            **({"writes": {"(bulk copy)": True}} if tree.args.get("kind") else {}),
+        )
         return out
 
     if isinstance(tree, exp.TruncateTable):

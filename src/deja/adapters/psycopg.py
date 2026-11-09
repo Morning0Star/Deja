@@ -50,8 +50,16 @@ def _wrap_execute(original, fetchall):
             cols = [d.name for d in self.description] if self.description else None
             return cols, self.rowcount, None, self.statusmessage
 
-        await _dbapi.run(OP, FLAVOR, self, _sql(query, self), params, lambda: original(self, query, params, **kwargs),
-                         lambda: fetchall(self), describe)
+        await _dbapi.run(
+            OP,
+            FLAVOR,
+            self,
+            _sql(query, self),
+            params,
+            lambda: original(self, query, params, **kwargs),
+            lambda: fetchall(self),
+            describe,
+        )
         return self
 
     execute.__wrapped__ = original
@@ -121,8 +129,9 @@ def _wrap_pool_op(op):
         async def method(self, *args, **kwargs):
             if passthrough():
                 return await original(self, *args, **kwargs)
-            return await io_call(op, (op,), lambda: original(self, *args, **kwargs), encode=lambda v: None,
-                                 decode=lambda v: None)
+            return await io_call(
+                op, (op,), lambda: original(self, *args, **kwargs), encode=lambda v: None, decode=lambda v: None
+            )
 
         method.__wrapped__ = original
         return method
@@ -288,8 +297,14 @@ def _wrap_connect(original):
             return FakeConnection(kwargs.get("autocommit", False), kwargs.get("row_factory"))
 
         # one recorded call: the steps connecting takes collapse into one, and replay hands back a stand-in
-        return await io_call("pg.connect", ("pg.connect",), lambda: original.__func__(cls, conninfo, **kwargs),
-                             encode=lambda c: None, decode=fake, default=fake)
+        return await io_call(
+            "pg.connect",
+            ("pg.connect",),
+            lambda: original.__func__(cls, conninfo, **kwargs),
+            encode=lambda c: None,
+            decode=fake,
+            default=fake,
+        )
 
     return classmethod(connect)
 
@@ -427,8 +442,16 @@ def _install_sync():
                 cols = [d.name for d in self.description] if self.description else None
                 return cols, self.rowcount, None, self.statusmessage
 
-            _dbapi.run_sync(OP, FLAVOR, self, _sql(query, self), params,
-                            lambda: original(self, query, params, **kwargs), lambda: fetchall(self), describe)
+            _dbapi.run_sync(
+                OP,
+                FLAVOR,
+                self,
+                _sql(query, self),
+                params,
+                lambda: original(self, query, params, **kwargs),
+                lambda: fetchall(self),
+                describe,
+            )
             return self
 
         return execute
@@ -458,8 +481,9 @@ def _install_sync():
             def method(self, *args, **kwargs):
                 if not in_scope():
                     return original(self, *args, **kwargs)
-                return io_call_sync(op, (op,), lambda: original(self, *args, **kwargs), encode=lambda v: None,
-                                    decode=lambda v: None)
+                return io_call_sync(
+                    op, (op,), lambda: original(self, *args, **kwargs), encode=lambda v: None, decode=lambda v: None
+                )
 
             return method
 
@@ -494,8 +518,9 @@ def _install_sync():
         def close(self):
             if self.closed or not in_scope():
                 return original(self)
-            return io_call_sync("pg.close", ("pg.close",), lambda: original(self), encode=lambda v: None,
-                                decode=lambda v: None)
+            return io_call_sync(
+                "pg.close", ("pg.close",), lambda: original(self), encode=lambda v: None, decode=lambda v: None
+            )
 
         return close
 
@@ -511,8 +536,13 @@ def _install_sync():
             return SyncFakeConnection(kwargs.get("autocommit", False))
         if rec is None:
             return original_connect.__func__(cls, conninfo, **kwargs)
-        return io_call_sync("pg.connect", ("pg.connect",), lambda: original_connect.__func__(cls, conninfo, **kwargs),
-                            encode=lambda v: None, decode=lambda v: None)
+        return io_call_sync(
+            "pg.connect",
+            ("pg.connect",),
+            lambda: original_connect.__func__(cls, conninfo, **kwargs),
+            encode=lambda v: None,
+            decode=lambda v: None,
+        )
 
     conn.connect = classmethod(connect)
     _undo.append(lambda: setattr(conn, "connect", original_connect))

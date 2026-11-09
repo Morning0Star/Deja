@@ -25,7 +25,11 @@ def _load_factory(spec: str):
         sys.path.insert(0, os.getcwd())
     module, _, attr = spec.partition(":")
     obj = getattr(importlib.import_module(module), attr or "app")
-    if callable(obj) and not hasattr(obj, "router") and getattr(obj, "__name__", "").startswith(("create", "make", "build")):
+    if (
+        callable(obj)
+        and not hasattr(obj, "router")
+        and getattr(obj, "__name__", "").startswith(("create", "make", "build"))
+    ):
         return obj
     return lambda: obj
 
@@ -110,8 +114,11 @@ def cmd_report(a) -> int:
         for _ in range(a.times):
             last = replay(schedule, factory, deadline_s=a.deadline)
             ok += last.followed and last.same_responses
-        verdict = {"times": a.times, "matched": ok,
-                   "summary": f"{ok}/{a.times} replays matched the recording" + "\n\n" + last.summary()}
+        verdict = {
+            "times": a.times,
+            "matched": ok,
+            "summary": f"{ok}/{a.times} replays matched the recording" + "\n\n" + last.summary(),
+        }
     out = write_report(a.recording, a.out, verdict)
     print(out)
     return 0
@@ -165,8 +172,10 @@ def cmd_shrink(a) -> int:
     from .shrink import shrink
 
     got = shrink(a.recording, _load_factory(a.app), a.out, deadline_s=a.deadline)
-    print(f"{a.out}: kept {', '.join(got['kept'])}; removed {', '.join(got['removed']) or 'nothing'}; "
-          f"{got['events'][1]} of {got['events'][0]} events")
+    print(
+        f"{a.out}: kept {', '.join(got['kept'])}; removed {', '.join(got['removed']) or 'nothing'}; "
+        f"{got['events'][1]} of {got['events'][0]} events"
+    )
     return 0
 
 

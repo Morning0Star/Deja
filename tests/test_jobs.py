@@ -59,5 +59,7 @@ def test_jobs_race_found_and_replayed(tmp_path):
     assert "orders jobs" in a["story"]
     r = replay(out["path"], make_handlers, deadline_s=5)
     assert r.followed and r.same_responses, r.summary()
-    assert sorted(v[1] for v in r.replayed.values()) == [b'{"__t": "dict", "v": [["reserved", "o1"]]}',
-                                                         b'{"__t": "dict", "v": [["reserved", "o2"]]}']
+    assert sorted(v[1] for v in r.replayed.values()) == [
+        b'{"__t": "dict", "v": [["reserved", "o1"]]}',
+        b'{"__t": "dict", "v": [["reserved", "o2"]]}',
+    ]

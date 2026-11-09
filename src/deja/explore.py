@@ -70,9 +70,12 @@ class ExploreLoop(ReplayLoop):
                         self.harness.start(rid)
                         self._progress()
                 allowed = None
-            choices = [i for i, h in enumerate(ready)
-                       if self._controlled(self._path_of(h)) and (
-                           allowed is None or self._path_of(h).split(".", 1)[0] in allowed)]
+            choices = [
+                i
+                for i, h in enumerate(ready)
+                if self._controlled(self._path_of(h))
+                and (allowed is None or self._path_of(h).split(".", 1)[0] in allowed)
+            ]
             if choices:
                 i = self.rng.choice(choices) if self.policy[0] == "random" else choices[0]
                 h = ready[i]
@@ -131,8 +134,12 @@ def run_once(schedule, app_factory, policy, deadline_s=10.0) -> dict:
         except Exception:
             pass
         loop.close()
-    return {"responses": dict(harness.results), "order": loop.order, "error": error,
-            "approximate": bool(loop.deja.io_misses)}
+    return {
+        "responses": dict(harness.results),
+        "order": loop.order,
+        "error": error,
+        "approximate": bool(loop.deja.io_misses),
+    }
 
 
 def _key(run):
@@ -154,8 +161,12 @@ def explore(recording, app_factory, tries: int = 50, seed: int = 1, deadline_s: 
         k = _key(run)
         if k not in serial and k not in races:
             races[k] = {"seed": seed + i, "run": run}
-    return {"requests": rids, "serial": [{"order": list(o), "responses": r["responses"]} for o, r in serial.values()],
-            "races": list(races.values()), "tries": tries}
+    return {
+        "requests": rids,
+        "serial": [{"order": list(o), "responses": r["responses"]} for o, r in serial.values()],
+        "races": list(races.values()),
+        "tries": tries,
+    }
 
 
 def summary(result) -> str:
@@ -174,7 +185,9 @@ def summary(result) -> str:
         lines.append(f"no other outcome in {result['tries']} random interleavings")
     for r in result["races"]:
         run = r["run"]
-        lines.append(f"RACE (seed {r['seed']}{', approximate' if run['approximate'] else ''}): "
-                     f"{fmt(run['responses'])}" + (f"  [{run['error']}]" if run["error"] else ""))
+        lines.append(
+            f"RACE (seed {r['seed']}{', approximate' if run['approximate'] else ''}): "
+            f"{fmt(run['responses'])}" + (f"  [{run['error']}]" if run["error"] else "")
+        )
         lines.append(f"  steps: {' '.join(p.split('.', 1)[0] for p in run['order'])}")
     return "\n".join(lines)

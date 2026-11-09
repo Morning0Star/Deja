@@ -51,10 +51,21 @@ async def call(app, method, path, body=b""):
             status = m["status"]
 
     p, _, q = path.partition("?")
-    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": method, "scheme": "http",
-             "path": p, "raw_path": p.encode(), "query_string": q.encode(), "root_path": "",
-             "headers": [(b"content-type", b"application/json"), (b"host", b"bench")],
-             "client": ("127.0.0.1", 1), "server": ("bench", 80), "state": {}}
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "http",
+        "path": p,
+        "raw_path": p.encode(),
+        "query_string": q.encode(),
+        "root_path": "",
+        "headers": [(b"content-type", b"application/json"), (b"host", b"bench")],
+        "client": ("127.0.0.1", 1),
+        "server": ("bench", 80),
+        "state": {},
+    }
     await app(scope, receive, send)
     return status
 
@@ -117,12 +128,14 @@ def main():
         return
     res = {"off": [], "on": []}
     for rep in range(a.reps):
-        for mode in (("off", "on") if rep % 2 == 0 else ("on", "off")):
+        for mode in ("off", "on") if rep % 2 == 0 else ("on", "off"):
             cpu, wall, _ = run(mode, a.n, a.concurrency)
             res[mode].append(cpu / a.n * 1e6)
             print(f"rep {rep + 1} {mode:3s}: {cpu / a.n * 1e6:7.0f} us CPU/request  ({a.n / wall:6.0f} req/s wall)")
     off, on = sorted(res["off"])[len(res["off"]) // 2], sorted(res["on"])[len(res["on"]) // 2]
-    print(f"\nmedian CPU per request: off {off:.0f} us, on {on:.0f} us  ->  +{on - off:.0f} us (+{(on / off - 1) * 100:.1f}%)")
+    print(
+        f"\nmedian CPU per request: off {off:.0f} us, on {on:.0f} us  ->  +{on - off:.0f} us (+{(on / off - 1) * 100:.1f}%)"
+    )
 
 
 if __name__ == "__main__":

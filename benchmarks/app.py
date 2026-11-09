@@ -33,8 +33,10 @@ async def lifespan(app):
                                                  total int NOT NULL);
     """)
     if await pool.fetchval("SELECT count(*) FROM bench_items") < ITEMS:
-        await pool.executemany("INSERT INTO bench_items VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-                               [(i, f"item-{i}", 100 + i % 900) for i in range(1, ITEMS + 1)])
+        await pool.executemany(
+            "INSERT INTO bench_items VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+            [(i, f"item-{i}", 100 + i % 900) for i in range(1, ITEMS + 1)],
+        )
     state["pool"] = pool
     state["http"] = httpx.AsyncClient(base_url=STUB, timeout=5)
     yield
@@ -67,7 +69,11 @@ async def create_order(order: Order):
     quote = (await state["http"].get("/quote", params={"item": order.item_id, "qty": order.qty})).json()
     total = price * order.qty - quote["discount"]
     order_id = await pool.fetchval(
-        "INSERT INTO bench_orders (item_id, qty, total) VALUES ($1, $2, $3) RETURNING id", order.item_id, order.qty, total)
+        "INSERT INTO bench_orders (item_id, qty, total) VALUES ($1, $2, $3) RETURNING id",
+        order.item_id,
+        order.qty,
+        total,
+    )
     return {"order_id": order_id, "total": total}
 
 

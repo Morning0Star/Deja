@@ -23,6 +23,5 @@ def test_step_to_a_point_and_inspect(tmp_path):
 
 def test_quit_stops_the_replay(tmp_path):
     path = record(tmp_path)
-    r = replay(path, fixable_app.make_racy, deadline_s=5,
-               on_step=Stepper(ask=lambda prompt: "q", say=lambda *a: None))
+    r = replay(path, fixable_app.make_racy, deadline_s=5, on_step=Stepper(ask=lambda prompt: "q", say=lambda *a: None))
     assert r.divergence == "stopped by the user"

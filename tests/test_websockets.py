@@ -51,9 +51,19 @@ class Client:
         self.task = None
 
     async def connect(self):
-        scope = {"type": "websocket", "asgi": {"version": "3.0"}, "scheme": "ws", "path": self.path,
-                 "raw_path": self.path.encode(), "query_string": b"", "root_path": "", "headers": [],
-                 "client": ("127.0.0.1", 1), "server": ("app", 80), "subprotocols": []}
+        scope = {
+            "type": "websocket",
+            "asgi": {"version": "3.0"},
+            "scheme": "ws",
+            "path": self.path,
+            "raw_path": self.path.encode(),
+            "query_string": b"",
+            "root_path": "",
+            "headers": [],
+            "client": ("127.0.0.1", 1),
+            "server": ("app", 80),
+            "subprotocols": [],
+        }
         await self.to_app.put({"type": "websocket.connect"})
         self.task = asyncio.ensure_future(self.app(scope, self.to_app.get, self.from_app.put))
         assert (await self.from_app.get())["type"] == "websocket.accept"

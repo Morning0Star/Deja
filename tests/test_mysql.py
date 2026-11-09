@@ -45,8 +45,9 @@ def stock_app(cfg):
                     await cur.execute("SELECT qty FROM deja_stock WHERE sku = %s", (sku,))
                     qty = (await cur.fetchone())["qty"]
                     await asyncio.sleep(0.02)
-                    changed = await cur.execute("UPDATE deja_stock SET qty = %(q)s WHERE sku = %(s)s",
-                                                {"q": qty - 1, "s": sku})
+                    changed = await cur.execute(
+                        "UPDATE deja_stock SET qty = %(q)s WHERE sku = %(s)s", {"q": qty - 1, "s": sku}
+                    )
                 await c.commit()
             return {"left": qty - 1, "changed": changed}
 
@@ -56,8 +57,9 @@ def stock_app(cfg):
 
 
 def test_mysql_lost_update_found_and_replayed(tmp_path):
-    path, responses = record_concurrently(stock_app(LIVE), [("POST", "/buy/w1"), ("POST", "/buy/w1")],
-                                          str(tmp_path / "my.deja"))
+    path, responses = record_concurrently(
+        stock_app(LIVE), [("POST", "/buy/w1"), ("POST", "/buy/w1")], str(tmp_path / "my.deja")
+    )
     # two sold, stock went down by one (MySQL counts the second UPDATE as 0 rows changed: it wrote the same 4)
     assert sorted(r.json()["changed"] for r in responses) == [0, 1] and {r.json()["left"] for r in responses} == {4}
     a = analyze(*read(path))

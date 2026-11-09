@@ -28,9 +28,13 @@ async def start_server():
         for i in range(3):
             yield f"{request.decode()}:{i}".encode()
 
-    handler = grpc.method_handlers_generic_handler("inventory.Stock", {
-        "GetStock": grpc.unary_unary_rpc_method_handler(get_stock),
-        "Watch": grpc.unary_stream_rpc_method_handler(watch)})
+    handler = grpc.method_handlers_generic_handler(
+        "inventory.Stock",
+        {
+            "GetStock": grpc.unary_unary_rpc_method_handler(get_stock),
+            "Watch": grpc.unary_stream_rpc_method_handler(watch),
+        },
+    )
     server = grpc.aio.server()
     server.add_generic_rpc_handlers((handler,))
     port = server.add_insecure_port("127.0.0.1:0")

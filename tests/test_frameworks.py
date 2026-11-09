@@ -51,8 +51,14 @@ def django_app():
     from django.conf import settings
 
     if not settings.configured:
-        settings.configure(ROOT_URLCONF="django_shop", ALLOWED_HOSTS=["*"], SECRET_KEY="test", DEBUG=False,
-                           MIDDLEWARE=[], INSTALLED_APPS=[])
+        settings.configure(
+            ROOT_URLCONF="django_shop",
+            ALLOWED_HOSTS=["*"],
+            SECRET_KEY="test",
+            DEBUG=False,
+            MIDDLEWARE=[],
+            INSTALLED_APPS=[],
+        )
         django.setup()
     sys.modules.pop("django_shop", None)
 

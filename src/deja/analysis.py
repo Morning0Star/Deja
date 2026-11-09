@@ -83,27 +83,59 @@ def _rule_touches(sql, params):
         return [{"resource": _res(m.group(2), _key(m.group(3), params)), "kind": "read", "columns": cols}]
     m = re.match(rf"update\s+{_TABLE}\s+set\s+(.+?)(?:\s+where\s+(.+))?$", s, re.I)
     if m:
-        return [{"resource": _res(m.group(1), _key(m.group(3), params)), "kind": "write",
-                 "writes": _assignments(m.group(2), params)}]
+        return [
+            {
+                "resource": _res(m.group(1), _key(m.group(3), params)),
+                "kind": "write",
+                "writes": _assignments(m.group(2), params),
+            }
+        ]
     m = re.match(rf"insert\s+into\s+{_TABLE}\s*(?:\(([^)]*)\))?\s*values\s*\((.*?)\)", s, re.I)
     if m:
         cols = [c.strip().strip('"') for c in (m.group(2) or "").split(",") if c.strip()]
         vals = [v.strip() for v in re.split(r",(?![^()]*\))", m.group(3))]
-        resolved = [_resolve(v, params) if re.fullmatch(r"\$\d+|'(?:[^']|'')*'|-?\d+(?:\.\d+)?", v) else v for v in vals]
+        resolved = [
+            _resolve(v, params) if re.fullmatch(r"\$\d+|'(?:[^']|'')*'|-?\d+(?:\.\d+)?", v) else v for v in vals
+        ]
         key = (cols[0], resolved[0]) if cols and resolved else (("id", resolved[0]) if resolved else None)
-        return [{"resource": _res(m.group(1), key), "kind": "write",
-                 "writes": dict(zip(cols, resolved)) if cols else {}}]
+        return [
+            {"resource": _res(m.group(1), key), "kind": "write", "writes": dict(zip(cols, resolved)) if cols else {}}
+        ]
     m = re.match(rf"delete\s+from\s+{_TABLE}(?:\s+where\s+(.+))?$", s, re.I)
     if m:
-        return [{"resource": _res(m.group(1), _key(m.group(2), params)), "kind": "write", "writes": {"(deleted)": True}}]
+        return [
+            {"resource": _res(m.group(1), _key(m.group(2), params)), "kind": "write", "writes": {"(deleted)": True}}
+        ]
     m = re.match(rf"truncate\s+(?:table\s+)?{_TABLE}", s, re.I)
     if m:
         return [{"resource": _res(m.group(1), None), "kind": "write", "writes": {"(truncated)": True}}]
     return []
 
 
-REDIS_READ = {"GET", "MGET", "HGET", "HGETALL", "HMGET", "HEXISTS", "HLEN", "EXISTS", "SMEMBERS", "SISMEMBER", "SCARD",
-              "LRANGE", "LLEN", "LINDEX", "ZRANGE", "ZSCORE", "ZCARD", "TTL", "PTTL", "STRLEN", "TYPE", "WATCH"}
+REDIS_READ = {
+    "GET",
+    "MGET",
+    "HGET",
+    "HGETALL",
+    "HMGET",
+    "HEXISTS",
+    "HLEN",
+    "EXISTS",
+    "SMEMBERS",
+    "SISMEMBER",
+    "SCARD",
+    "LRANGE",
+    "LLEN",
+    "LINDEX",
+    "ZRANGE",
+    "ZSCORE",
+    "ZCARD",
+    "TTL",
+    "PTTL",
+    "STRLEN",
+    "TYPE",
+    "WATCH",
+}
 _REDIS_ALL_KEYS = {"MGET", "EXISTS", "DEL", "UNLINK", "WATCH", "TOUCH", "SUNION", "SINTER", "SDIFF"}
 
 
@@ -111,8 +143,11 @@ _MONGO_READ = {"find", "find_one", "count_documents", "estimated_document_count"
 
 
 def _scalars(doc):
-    return {k: v for k, v in (doc or {}).items() if isinstance(k, str) and not k.startswith("$")
-            and not isinstance(v, (dict, list))}
+    return {
+        k: v
+        for k, v in (doc or {}).items()
+        if isinstance(k, str) and not k.startswith("$") and not isinstance(v, (dict, list))
+    }
 
 
 def _mongo_touches(d, raw):
@@ -140,12 +175,24 @@ def _mongo_touches(d, raw):
             if i < len(ids) and ids[i] is not None:
                 w.setdefault("_id", ids[i])
             key = {"_id": w["_id"]} if "_id" in w else ({k: w[k] for k in list(w)[:1]} if w else None)
-            out.append({"resource": _res(table, next(iter(key.items())) if key else None) if key else table,
-                        "kind": "write", "table": table, "rows": [key] if key else None, "precise": bool(key),
-                        "where": None, "writes": w, "insert": True})
+            out.append(
+                {
+                    "resource": _res(table, next(iter(key.items())) if key else None) if key else table,
+                    "kind": "write",
+                    "table": table,
+                    "rows": [key] if key else None,
+                    "precise": bool(key),
+                    "where": None,
+                    "writes": w,
+                    "insert": True,
+                }
+            )
         return out
-    eq = {k: v for k, v in (flt or {}).items() if isinstance(k, str) and not k.startswith("$")
-          and not isinstance(v, (dict, list))}
+    eq = {
+        k: v
+        for k, v in (flt or {}).items()
+        if isinstance(k, str) and not k.startswith("$") and not isinstance(v, (dict, list))
+    }
     precise = bool(eq) and len(eq) == len(flt or {})
     writes = None
     if kind == "write":
@@ -156,9 +203,14 @@ def _mongo_touches(d, raw):
                 writes.update({f"{k} ({op_name[1:]})": v for k, v in update[op_name].items()})
         if method.startswith("delete") or method == "find_one_and_delete":
             writes = {"(deleted)": True}
-    t = {"resource": (f"{table}[{', '.join(f'{k}={v}' for k, v in eq.items())}]" if precise else table),
-         "kind": kind, "table": table, "rows": [eq] if precise else None, "precise": precise,
-         "where": None if precise else (str(flt) if flt else None)}
+    t = {
+        "resource": (f"{table}[{', '.join(f'{k}={v}' for k, v in eq.items())}]" if precise else table),
+        "kind": kind,
+        "table": table,
+        "rows": [eq] if precise else None,
+        "precise": precise,
+        "where": None if precise else (str(flt) if flt else None),
+    }
     if writes is not None:
         t["writes"] = writes
     if isinstance((a.get("kwargs") or {}), dict) and (a.get("kwargs") or {}).get("upsert"):
@@ -218,7 +270,7 @@ def _redis_touches(args):
             n = int(rest[1])
         except (IndexError, ValueError):
             return []
-        keys, values = rest[2:2 + n], [None] * n
+        keys, values = rest[2 : 2 + n], [None] * n
     else:
         keys, values = rest[:1], rest[1:2] or [None]
     out = []
@@ -264,7 +316,11 @@ def call_touches(io: dict, kinds: dict | None = None) -> list[dict]:
         if kind == "ignore":
             return []
         verb = d["method"].rsplit("/", 1)[-1]
-        guess = "read" if verb.startswith(("Get", "List", "Read", "Find", "Search", "Describe", "Check", "Watch")) else "write"
+        guess = (
+            "read"
+            if verb.startswith(("Get", "List", "Read", "Find", "Search", "Describe", "Check", "Watch"))
+            else "write"
+        )
         return [{"resource": res, "kind": kind or guess}]
     if op == "executor" and d.get("function"):
         return [{"resource": f"worker:{d['function']}", "kind": "call"}]
@@ -351,17 +407,30 @@ def analyze(header: dict, events: list) -> dict:
         elif code == ev.REQUEST:
             t = stamp(e[7] if len(e) > 7 else None)
             body = e[6]
-            requests[e[1]] = {"id": f"q{e[1]}", "rid": e[1], "method": e[3], "path": e[4],
-                              "body": body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else body,
-                              "start": t, "end": None, "status": None, "response": None, "seq": seq,
-                              "kind": "websocket" if e[3] == "WS" else "http", "failed": False}
+            requests[e[1]] = {
+                "id": f"q{e[1]}",
+                "rid": e[1],
+                "method": e[3],
+                "path": e[4],
+                "body": body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else body,
+                "start": t,
+                "end": None,
+                "status": None,
+                "response": None,
+                "seq": seq,
+                "kind": "websocket" if e[3] == "WS" else "http",
+                "failed": False,
+            }
         elif code == ev.RESPONSE and e[1] in requests:
             t = stamp(e[4] if len(e) > 4 else None)
             body = e[3] if len(e) > 3 else b""
             r = requests[e[1]]
-            r.update(end=t, status=e[2],
-                     response=body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else body,
-                     failed=(e[2] == 1011) if r["method"] == "WS" else e[2] >= 500)
+            r.update(
+                end=t,
+                status=e[2],
+                response=body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else body,
+                failed=(e[2] == 1011) if r["method"] == "WS" else e[2] >= 500,
+            )
         elif code == ev.STEP and e[1] and e[1][0] in "qb":
             steps.append({"seq": seq, "t": now, "task": e[1], "req": _root(e[1])})
         elif code == ev.IO_START and e[1] and e[1][0] in "qb":
@@ -369,9 +438,19 @@ def analyze(header: dict, events: list) -> dict:
         elif code == ev.IO_END and e[1] and e[1][0] in "qb":
             start = open_io.pop(e[1], {"t0": now, "seq0": seq})
             t1 = stamp(e[6] if len(e) > 6 else None)
-            io = {"seq": seq, "seq0": start["seq0"], "task": e[1], "req": _root(e[1]), "op": e[2], "t0": start["t0"],
-                  "t1": t1, "ok": e[4] == "ok", "result": short(e[5]), "raw": e[5],
-                  "detail": e[7] if len(e) > 7 else None}
+            io = {
+                "seq": seq,
+                "seq0": start["seq0"],
+                "task": e[1],
+                "req": _root(e[1]),
+                "op": e[2],
+                "t0": start["t0"],
+                "t1": t1,
+                "ok": e[4] == "ok",
+                "result": short(e[5]),
+                "raw": e[5],
+                "detail": e[7] if len(e) > 7 else None,
+            }
             io["touches"] = call_touches(io, header.get("call_kinds"))
             ios.append(io)
             try:
@@ -391,9 +470,18 @@ def analyze(header: dict, events: list) -> dict:
                 # a statement that reads and then writes (a guarded insert, UPDATE ... FROM) reads when it starts:
                 # two that overlap in the database both read before either wrote
                 at_start = both and tch["kind"] == "read"
-                row = {**tch, "seq": io["seq0"] if at_start else seq, "t": io["t0"] if at_start else t1,
-                       "req": io["req"], "task": e[1], "op": e[2], "value": value, "_result": decoded,
-                       "result": io["result"], "source": "recorded call"}
+                row = {
+                    **tch,
+                    "seq": io["seq0"] if at_start else seq,
+                    "t": io["t0"] if at_start else t1,
+                    "req": io["req"],
+                    "task": e[1],
+                    "op": e[2],
+                    "value": value,
+                    "_result": decoded,
+                    "result": io["result"],
+                    "source": "recorded call",
+                }
                 if not e[2].startswith(("pg.", "sql.")):  # an HTTP endpoint, an S3 object, a gRPC method: one thing
                     row.setdefault("precise", True)
                 level = iso.get(e[1])
@@ -427,15 +515,31 @@ def analyze(header: dict, events: list) -> dict:
                     iso.pop(e[1], None)
                     held.pop(e[1], None)
             if e[4] == "err" and "deadlock" in str((io.get("raw") or {}).get("type", "")).lower():
-                deadlocks.append({"io": io, "held": {k: list(v) for k, v in held.items() if k != e[1]},
-                                  "mine": list(held.get(e[1], []))})
+                deadlocks.append(
+                    {
+                        "io": io,
+                        "held": {k: list(v) for k, v in held.items() if k != e[1]},
+                        "mine": list(held.get(e[1], [])),
+                    }
+                )
         elif code == ev.TOUCH and e[1] and e[1][0] in "qb":
             t = stamp(e[5] if len(e) > 5 else None)
-            touches.append({"resource": e[2], "kind": e[3], "seq": seq, "t": t, "req": _root(e[1]), "task": e[1],
-                            "op": "deja.touch", "value": codec.decode(e[4]),
-                            "writes": {"value": codec.decode(e[4])} if e[3] == "write" else None,
-                            "source": "reported by the app", "message": messages.get(_root(e[1])) or None,
-                            "thread": is_thread_path(e[1])})
+            touches.append(
+                {
+                    "resource": e[2],
+                    "kind": e[3],
+                    "seq": seq,
+                    "t": t,
+                    "req": _root(e[1]),
+                    "task": e[1],
+                    "op": "deja.touch",
+                    "value": codec.decode(e[4]),
+                    "writes": {"value": codec.decode(e[4])} if e[3] == "write" else None,
+                    "source": "reported by the app",
+                    "message": messages.get(_root(e[1])) or None,
+                    "thread": is_thread_path(e[1]),
+                }
+            )
 
     for stack in tx.values():  # still open when the recording ends: not visible to anyone yet
         stack.clear()
@@ -444,14 +548,30 @@ def analyze(header: dict, events: list) -> dict:
     for root in sorted({_root(x["task"]) for x in steps} | {t["req"] for t in touches}):
         if root and root[0] == "b" and root not in requests:
             first = next((x["t"] for x in steps if _root(x["task"]) == root), 0)
-            requests[root] = {"id": root, "rid": root, "method": "TASK", "path": background.get(root, root),
-                              "body": "", "start": first, "end": now, "status": None, "response": None, "seq": 0,
-                              "kind": "background", "failed": False}
+            requests[root] = {
+                "id": root,
+                "rid": root,
+                "method": "TASK",
+                "path": background.get(root, root),
+                "body": "",
+                "start": first,
+                "end": now,
+                "status": None,
+                "response": None,
+                "seq": 0,
+                "kind": "background",
+                "failed": False,
+            }
     touches = _narrow(touches)
     conflicts = _conflicts(touches)
-    skew = [c for c in _write_skew(touches, conflicts)  # a range check-then-act already tells this one
-            if not any(r.get("range") and {r["a"], r["b"]} == {c["a"], c["b"]} and {c["x"], c["y"]} <= set(r["rows"])
-                       for r in conflicts)]
+    skew = [
+        c
+        for c in _write_skew(touches, conflicts)  # a range check-then-act already tells this one
+        if not any(
+            r.get("range") and {r["a"], r["b"]} == {c["a"], c["b"]} and {c["x"], c["y"]} <= set(r["rows"])
+            for r in conflicts
+        )
+    ]
     conflicts = skew + _torn_reads(touches) + _deadlocks(deadlocks, ios) + conflicts
     order = {"deadlock": 0, "lost-update": 1, "check-then-act": 2, "write-skew": 3, "torn-read": 4, "stale-read": 5}
     conflicts.sort(key=lambda c: (c["confidence"] != "certain", order[c["pattern"]], c["t0"] or 0))
@@ -465,11 +585,19 @@ def analyze(header: dict, events: list) -> dict:
         c["moments"] = _moments([c], touches, names, labels, requests)
     return {
         "requests": [requests[k] for k in sorted(requests, key=lambda k: (isinstance(k, str), str(k).zfill(9)))],
-        "steps": steps, "ios": [{k: v for k, v in io.items() if k != "raw"} for io in ios],
-        "touches": [{k: (v if k != "value" else short(codec.encode(v))) for k, v in t.items()
-                     if k[0] != "_" and k != "only"} for t in touches],
-        "conflicts": conflicts, "story": story, "moments": moments, "names": names, "labels": labels,
-        "reason": header.get("reason"), "duration_ms": now or 0,
+        "steps": steps,
+        "ios": [{k: v for k, v in io.items() if k != "raw"} for io in ios],
+        "touches": [
+            {k: (v if k != "value" else short(codec.encode(v))) for k, v in t.items() if k[0] != "_" and k != "only"}
+            for t in touches
+        ],
+        "conflicts": conflicts,
+        "story": story,
+        "moments": moments,
+        "names": names,
+        "labels": labels,
+        "reason": header.get("reason"),
+        "duration_ms": now or 0,
     }
 
 
@@ -577,7 +705,7 @@ def _narrow(touches):
                 if keys:
                     t["expanded"] = True
                 for r in keys:
-                    k = r[len(prefix):-1]
+                    k = r[len(prefix) : -1]
                     seen = any(str(x) == k for x in snap) if isinstance(snap, list) else snap
                     out.append({**t, "resource": r, "value": seen, "derived": True, "expanded": False})
             continue
@@ -603,9 +731,10 @@ def _narrow(touches):
                 if everything:
                     decided = True
                 elif match is not None:
-                    decided = match(_values_at(known, r, t["seq"]),
-                                    lambda table, seq=t["seq"]: [_values_at(known, x, seq) for x in
-                                                                 sorted(rows_of.get(table, ()))])
+                    decided = match(
+                        _values_at(known, r, t["seq"]),
+                        lambda table, seq=t["seq"]: [_values_at(known, x, seq) for x in sorted(rows_of.get(table, ()))],
+                    )
                 else:
                     decided = None
                 # not among the rows returned: the row was not there (yet) when the query ran
@@ -615,8 +744,16 @@ def _narrow(touches):
             elif decided:
                 if covered is not None and r not in covered:
                     missing.add(r)  # matched the condition but wasn't returned: the row did not exist yet
-                out.append({**{k: v for k, v in t.items() if k != "_match"}, "resource": r, "precise": True,
-                            "value": value, "derived": True, "narrowed": cond})
+                out.append(
+                    {
+                        **{k: v for k, v in t.items() if k != "_match"},
+                        "resource": r,
+                        "precise": True,
+                        "value": value,
+                        "derived": True,
+                        "narrowed": cond,
+                    }
+                )
         t["expanded"], t["only"] = True, possible
         if missing and t["kind"] == "read":
             t["_missing"], t["range"] = missing, cond
@@ -631,26 +768,49 @@ def _range_conflicts(touches):
     writes = [t for t in touches if t["kind"] == "write" and t.get("precise")]
     out = []
     for i, ta in enumerate(reads):
-        for tb in reads[i + 1:]:
+        for tb in reads[i + 1 :]:
             if tb["req"] == ta["req"] or not (ta["range"] == tb["range"] or ta["_missing"] & tb["_missing"]):
                 continue
-            wa = next((w for w in writes if w["req"] == ta["req"] and w["resource"] in ta["_missing"]
-                       and w["seq"] > ta["seq"]), None)
-            wb = next((w for w in writes if w["req"] == tb["req"] and w["resource"] in tb["_missing"]
-                       and w["seq"] > tb["seq"]), None)
+            wa = next(
+                (
+                    w
+                    for w in writes
+                    if w["req"] == ta["req"] and w["resource"] in ta["_missing"] and w["seq"] > ta["seq"]
+                ),
+                None,
+            )
+            wb = next(
+                (
+                    w
+                    for w in writes
+                    if w["req"] == tb["req"] and w["resource"] in tb["_missing"] and w["seq"] > tb["seq"]
+                ),
+                None,
+            )
             if not (wa and wb and tb["seq"] < wa["seq"]):
                 continue
             involved = [ta, tb, wa, wb]
-            out.append({"pattern": "check-then-act", "resource": ta["range"], "a": ta["req"], "b": tb["req"],
-                        "confidence": "certain", "broad": None, "narrowed": None, "range": True,
-                        "read_a": "no rows", "read_b": "no rows",
-                        "write_a": f"{wa['resource']}: {_fmt_writes(wa.get('writes'))}",
-                        "write_b": f"{wb['resource']}: {_fmt_writes(wb.get('writes'))}",
-                        "last_writer": tb["req"] if wb["seq"] > wa["seq"] else ta["req"],
-                        "seqs": [t["seq"] for t in involved],
-                        "rows": sorted({wa["resource"], wb["resource"]}),
-                        "t0": min(t["t"] for t in involved if t["t"] is not None),
-                        "t1": max(t["t"] for t in involved if t["t"] is not None)})
+            out.append(
+                {
+                    "pattern": "check-then-act",
+                    "resource": ta["range"],
+                    "a": ta["req"],
+                    "b": tb["req"],
+                    "confidence": "certain",
+                    "broad": None,
+                    "narrowed": None,
+                    "range": True,
+                    "read_a": "no rows",
+                    "read_b": "no rows",
+                    "write_a": f"{wa['resource']}: {_fmt_writes(wa.get('writes'))}",
+                    "write_b": f"{wb['resource']}: {_fmt_writes(wb.get('writes'))}",
+                    "last_writer": tb["req"] if wb["seq"] > wa["seq"] else ta["req"],
+                    "seqs": [t["seq"] for t in involved],
+                    "rows": sorted({wa["resource"], wb["resource"]}),
+                    "t0": min(t["t"] for t in involved if t["t"] is not None),
+                    "t1": max(t["t"] for t in involved if t["t"] is not None),
+                }
+            )
     return out
 
 
@@ -689,7 +849,7 @@ def _conflicts(touches):
             if t["req"] not in reqs:
                 reqs.append(t["req"])
         for i, a in enumerate(reqs):
-            for b in reqs[i + 1:]:
+            for b in reqs[i + 1 :]:
                 ra = [t for t in acc if t["req"] == a and t["kind"] == "read"]
                 rb = [t for t in acc if t["req"] == b and t["kind"] == "read"]
                 wa = [t for t in acc if t["req"] == a and t["kind"] == "write"]
@@ -709,6 +869,7 @@ def _conflicts(touches):
                         continue
                     seen.add(key)
                     if first_wa and later_wb:
+
                         def none_there(t):
                             return _absent(t["value"]) or (t.get("existence") and t["value"] == 0)
 
@@ -717,19 +878,34 @@ def _conflicts(touches):
                         pattern = "stale-read"
                     else:
                         continue
-                    out.append({"pattern": pattern, "resource": res, "a": a, "b": b,
-                                "confidence": "possible" if possible else "certain",
-                                "broad": next((f"{t['table']}" + (f" WHERE {t['where']}" if t.get("where") else "")
-                                               for t in involved if t.get("broad")), None),
-                                "narrowed": next((t["narrowed"] for t in involved if t.get("narrowed")), None),
-                                "read_a": short(codec.encode(r_a["value"])), "read_b": short(codec.encode(r_b["value"])),
-                                "write_a": _fmt_writes(first_wa.get("writes")) if first_wa else None,
-                                "write_b": _fmt_writes(later_wb.get("writes")) if later_wb else None,
-                                "last_writer": (b if later_wb and (not first_wa or later_wb["seq"] > first_wa["seq"])
-                                                else a),
-                                "seqs": [t["seq"] for t in involved],
-                                "t0": min(t["t"] for t in involved if t["t"] is not None),
-                                "t1": max(t["t"] for t in involved if t["t"] is not None)})
+                    out.append(
+                        {
+                            "pattern": pattern,
+                            "resource": res,
+                            "a": a,
+                            "b": b,
+                            "confidence": "possible" if possible else "certain",
+                            "broad": next(
+                                (
+                                    f"{t['table']}" + (f" WHERE {t['where']}" if t.get("where") else "")
+                                    for t in involved
+                                    if t.get("broad")
+                                ),
+                                None,
+                            ),
+                            "narrowed": next((t["narrowed"] for t in involved if t.get("narrowed")), None),
+                            "read_a": short(codec.encode(r_a["value"])),
+                            "read_b": short(codec.encode(r_b["value"])),
+                            "write_a": _fmt_writes(first_wa.get("writes")) if first_wa else None,
+                            "write_b": _fmt_writes(later_wb.get("writes")) if later_wb else None,
+                            "last_writer": (
+                                b if later_wb and (not first_wa or later_wb["seq"] > first_wa["seq"]) else a
+                            ),
+                            "seqs": [t["seq"] for t in involved],
+                            "t0": min(t["t"] for t in involved if t["t"] is not None),
+                            "t1": max(t["t"] for t in involved if t["t"] is not None),
+                        }
+                    )
     ranged = _range_conflicts(touches)
     for rc in ranged:  # the rows it inserted are explained by the range conflict; drop their per-row echoes
         out = [c for c in out if not ({c["a"], c["b"]} == {rc["a"], rc["b"]} and c["resource"] in rc["rows"])]
@@ -759,10 +935,24 @@ def _by_req(touches):
 
 
 def _conflict(pattern, resource, a, b, involved, **fields):
-    return {"pattern": pattern, "resource": resource, "a": a, "b": b, "confidence": "certain", "broad": None,
-            "narrowed": None, "read_a": None, "read_b": None, "write_a": None, "write_b": None, "last_writer": b,
-            "seqs": [t["seq"] for t in involved], "t0": min((t["t"] for t in involved if t["t"] is not None), default=0),
-            "t1": max((t["t"] for t in involved if t["t"] is not None), default=0), **fields}
+    return {
+        "pattern": pattern,
+        "resource": resource,
+        "a": a,
+        "b": b,
+        "confidence": "certain",
+        "broad": None,
+        "narrowed": None,
+        "read_a": None,
+        "read_b": None,
+        "write_a": None,
+        "write_b": None,
+        "last_writer": b,
+        "seqs": [t["seq"] for t in involved],
+        "t0": min((t["t"] for t in involved if t["t"] is not None), default=0),
+        "t1": max((t["t"] for t in involved if t["t"] is not None), default=0),
+        **fields,
+    }
 
 
 def _write_skew(touches, conflicts):
@@ -773,7 +963,7 @@ def _write_skew(touches, conflicts):
     out, pairs = [], set()
     reqs = sorted(set(reads) | set(writes))
     for i, a in enumerate(reqs):
-        for b in reqs[i + 1:]:
+        for b in reqs[i + 1 :]:
             for x, wa in writes[a].items():
                 rb = reads[b].get(x)
                 if x in writes[b] or rb is None or rb["seq"] >= wa["seq"]:
@@ -786,14 +976,31 @@ def _write_skew(touches, conflicts):
                         break
                     pairs.add((a, b))
                     involved = sorted([ra, rb, wa, wb], key=lambda t: t["seq"])
-                    out.append(_conflict("write-skew", f"{x} and {y}", a, b, involved, x=x, y=y,
-                                         read_a=f"{y} = {short(codec.encode(ra['value']))}",
-                                         read_b=f"{x} = {short(codec.encode(rb['value']))}",
-                                         write_a=f"{x}: {_fmt_writes(wa.get('writes'))}",
-                                         write_b=f"{y}: {_fmt_writes(wb.get('writes'))}"))
+                    out.append(
+                        _conflict(
+                            "write-skew",
+                            f"{x} and {y}",
+                            a,
+                            b,
+                            involved,
+                            x=x,
+                            y=y,
+                            read_a=f"{y} = {short(codec.encode(ra['value']))}",
+                            read_b=f"{x} = {short(codec.encode(rb['value']))}",
+                            write_a=f"{x}: {_fmt_writes(wa.get('writes'))}",
+                            write_b=f"{y}: {_fmt_writes(wb.get('writes'))}",
+                        )
+                    )
     for c in out:  # the same story told twice as two stale reads
-        conflicts[:] = [d for d in conflicts if not (d["pattern"] == "stale-read" and {d["a"], d["b"]} == {c["a"], c["b"]}
-                                                    and d["resource"] in (c["x"], c["y"]))]
+        conflicts[:] = [
+            d
+            for d in conflicts
+            if not (
+                d["pattern"] == "stale-read"
+                and {d["a"], d["b"]} == {c["a"], c["b"]}
+                and d["resource"] in (c["x"], c["y"])
+            )
+        ]
     return out
 
 
@@ -808,26 +1015,48 @@ def _torn_reads(touches):
     for a, ts in by_req.items():
         ws = [t for t in ts if t["kind"] == "write"]
         for i, w1 in enumerate(ws):
-            for w2 in ws[i + 1:]:
+            for w2 in ws[i + 1 :]:
                 if w2["resource"] == w1["resource"] or w2["seq"] <= w1["seq"]:
                     continue
                 for b, other in by_req.items():
                     if b == a or (a, b) in seen:
                         continue
-                    r1 = next((t for t in other if t["kind"] == "read" and t["resource"] == w1["resource"]
-                               and w1["seq"] < t["seq"]), None)
-                    r2 = next((t for t in other if t["kind"] == "read" and t["resource"] == w2["resource"]
-                               and t["seq"] < w2["seq"]), None)
+                    r1 = next(
+                        (
+                            t
+                            for t in other
+                            if t["kind"] == "read" and t["resource"] == w1["resource"] and w1["seq"] < t["seq"]
+                        ),
+                        None,
+                    )
+                    r2 = next(
+                        (
+                            t
+                            for t in other
+                            if t["kind"] == "read" and t["resource"] == w2["resource"] and t["seq"] < w2["seq"]
+                        ),
+                        None,
+                    )
                     if r1 is None or r2 is None or not (r1["seq"] < w2["seq"] or w1["seq"] < r2["seq"]):
                         continue
                     seen.add((a, b))
                     x, y = w1["resource"], w2["resource"]
                     involved = sorted([w1, r1, r2, w2], key=lambda t: t["seq"])
-                    out.append(_conflict("torn-read", f"{x} and {y}", a, b, involved, x=x, y=y,
-                                         read_b=f"{x} = {short(codec.encode(r1['value']))}, "
-                                                f"{y} = {short(codec.encode(r2['value']))}",
-                                         write_a=f"{x}: {_fmt_writes(w1.get('writes'))}, then "
-                                                 f"{y}: {_fmt_writes(w2.get('writes'))}", last_writer=a))
+                    out.append(
+                        _conflict(
+                            "torn-read",
+                            f"{x} and {y}",
+                            a,
+                            b,
+                            involved,
+                            x=x,
+                            y=y,
+                            read_b=f"{x} = {short(codec.encode(r1['value']))}, "
+                            f"{y} = {short(codec.encode(r2['value']))}",
+                            write_a=f"{x}: {_fmt_writes(w1.get('writes'))}, then {y}: {_fmt_writes(w2.get('writes'))}",
+                            last_writer=a,
+                        )
+                    )
     return out
 
 
@@ -845,14 +1074,36 @@ def _deadlocks(found, ios):
             # what the other request was waiting for: its statement that overlapped the stopped one and touched a
             # row the stopped transaction held (it often finishes first: the deadlock error released those locks)
             mine = {r[0] for r in d["mine"]}
-            want = next((t["resource"] for x in ios if x["task"] == task and x["seq0"] < io["seq"]
-                         and x["seq"] > io["seq0"] for t in x["touches"] if t["resource"] in mine), None)
+            want = next(
+                (
+                    t["resource"]
+                    for x in ios
+                    if x["task"] == task and x["seq0"] < io["seq"] and x["seq"] > io["seq0"]
+                    for t in x["touches"]
+                    if t["resource"] in mine
+                ),
+                None,
+            )
             a, b = _root(task), io["req"]
-            involved = [{"seq": hit[1], "t": hit[2]}, {"seq": io["seq0"], "t": io["t0"]},
-                        {"seq": io["seq"], "t": io["t1"]}]
-            out.append(_conflict("deadlock", f"{hit[0]} and {want or 'a row'}", a, b, involved, x=hit[0],
-                                 y=want or "a row", write_a=f"held {hit[0]}", write_b=f"waited for {hit[0]}",
-                                 last_writer=b))
+            involved = [
+                {"seq": hit[1], "t": hit[2]},
+                {"seq": io["seq0"], "t": io["t0"]},
+                {"seq": io["seq"], "t": io["t1"]},
+            ]
+            out.append(
+                _conflict(
+                    "deadlock",
+                    f"{hit[0]} and {want or 'a row'}",
+                    a,
+                    b,
+                    involved,
+                    x=hit[0],
+                    y=want or "a row",
+                    write_a=f"held {hit[0]}",
+                    write_b=f"waited for {hit[0]}",
+                    last_writer=b,
+                )
+            )
             break
     return out
 
@@ -908,53 +1159,75 @@ def _story(conflicts, requests, names, header, labels):
     what_a, what_b = _req_label(ra, labels) if ra else c["a"], _req_label(rb, labels) if rb else c["b"]
     if what_a == what_b:
         noun = _noun(ra)
-        who = (f"Two connections to {ra['path'].split('?')[0]} ({A} and {B})" if noun == "connection"
-               else f"Two {ra['path']} jobs ({A} and {B})" if noun == "job"
-               else f"Two {what_a} requests ({A} and {B})")
+        who = (
+            f"Two connections to {ra['path'].split('?')[0]} ({A} and {B})"
+            if noun == "connection"
+            else f"Two {ra['path']} jobs ({A} and {B})"
+            if noun == "job"
+            else f"Two {what_a} requests ({A} and {B})"
+        )
     else:
         who = f"{_noun(ra).capitalize()} {A} ({what_a}) and {_noun(rb)} {B} ({what_b})"
     if c["pattern"] == "write-skew":
         x, y = _label(c["x"], labels), _label(c["y"], labels)
-        text = (f"{who} ran at the same time. {A} read {y} ({c['read_a']}) and then changed {x} "
-                f"({c['write_a']}); {B} read {x} ({c['read_b']}) and then changed {y} ({c['write_b']}). Each "
-                f"decided from a value the other was about to change, and neither saw the other's write. No single "
-                f"value was overwritten, but together the two changes can break a rule that holds for {x} and {y} "
-                f"together. This is write skew.")
+        text = (
+            f"{who} ran at the same time. {A} read {y} ({c['read_a']}) and then changed {x} "
+            f"({c['write_a']}); {B} read {x} ({c['read_b']}) and then changed {y} ({c['write_b']}). Each "
+            f"decided from a value the other was about to change, and neither saw the other's write. No single "
+            f"value was overwritten, but together the two changes can break a rule that holds for {x} and {y} "
+            f"together. This is write skew."
+        )
     elif c["pattern"] == "torn-read":
         x, y = _label(c["x"], labels), _label(c["y"], labels)
-        text = (f"{who} ran at the same time. {A} changed {x} and then {y} as one update ({c['write_a']}). In "
-                f"between, {B} read both ({c['read_b']}): {x} already changed, {y} not yet. {B} saw the update half "
-                f"done. This is a torn read of {x} and {y}.")
+        text = (
+            f"{who} ran at the same time. {A} changed {x} and then {y} as one update ({c['write_a']}). In "
+            f"between, {B} read both ({c['read_b']}): {x} already changed, {y} not yet. {B} saw the update half "
+            f"done. This is a torn read of {x} and {y}."
+        )
     elif c["pattern"] == "deadlock":
         x, y = _label(c["x"], labels), _label(c["y"], labels)
-        text = (f"{who} ran at the same time inside database transactions. {A} held {x} and waited for {y}; "
-                f"{B} held {y} and waited for {x}. Neither could go on, so Postgres stopped {B}'s transaction with "
-                f"a deadlock error. Taking the locks in the same order in every request avoids it.")
+        text = (
+            f"{who} ran at the same time inside database transactions. {A} held {x} and waited for {y}; "
+            f"{B} held {y} and waited for {x}. Neither could go on, so Postgres stopped {B}'s transaction with "
+            f"a deadlock error. Taking the locks in the same order in every request avoids it."
+        )
     elif c["pattern"] == "lost-update":
         last = names[c["last_writer"]]
         first = A if last == B else B
-        text = (f"{who} ran at the same time. {A} read {res} and got {c['read_a']}. Before {A} saved its change, "
-                f"{B} also read {res} and got {c['read_b']}. Both then saved their own result "
-                f"({A}: {c['write_a']}; {B}: {c['write_b']}). {last} saved last and overwrote {first}'s change, "
-                f"so one update was lost. This is a lost update on {res}.")
+        text = (
+            f"{who} ran at the same time. {A} read {res} and got {c['read_a']}. Before {A} saved its change, "
+            f"{B} also read {res} and got {c['read_b']}. Both then saved their own result "
+            f"({A}: {c['write_a']}; {B}: {c['write_b']}). {last} saved last and overwrote {first}'s change, "
+            f"so one update was lost. This is a lost update on {res}."
+        )
     elif c["pattern"] == "check-then-act" and c.get("range"):
-        text = (f"{who} ran at the same time. Both looked for {res} first and both found no rows. Both then "
-                f"added one ({A}: {c['write_a']}; {B}: {c['write_b']}), so the range that should have held at most "
-                f"one now holds two. This is a check-then-act race on {res}.")
+        text = (
+            f"{who} ran at the same time. Both looked for {res} first and both found no rows. Both then "
+            f"added one ({A}: {c['write_a']}; {B}: {c['write_b']}), so the range that should have held at most "
+            f"one now holds two. This is a check-then-act race on {res}."
+        )
     elif c["pattern"] == "check-then-act":
-        text = (f"{who} ran at the same time. Both checked {res} first and both saw that it was not there "
-                f"({c['read_a']} and {c['read_b']}). Both then created it, so it was created twice. "
-                f"This is a check-then-act race on {res}.")
+        text = (
+            f"{who} ran at the same time. Both checked {res} first and both saw that it was not there "
+            f"({c['read_a']} and {c['read_b']}). Both then created it, so it was created twice. "
+            f"This is a check-then-act race on {res}."
+        )
     else:
         writer = A if c["write_a"] else B
-        text = (f"{who} ran at the same time. {B} read {res} ({c['read_b']}) while {A} was in the middle of "
-                f"changing it; {writer} then wrote {c['write_a'] or c['write_b']}. {B} acted on a stale value.")
+        text = (
+            f"{who} ran at the same time. {B} read {res} ({c['read_b']}) while {A} was in the middle of "
+            f"changing it; {writer} then wrote {c['write_a'] or c['write_b']}. {B} acted on a stale value."
+        )
     if c.get("narrowed") and c["confidence"] == "certain":
-        text += (f" (One query covered {c['narrowed']}; Déjà checked that condition against the recorded rows "
-                 f"to find that it included {res}.)")
+        text += (
+            f" (One query covered {c['narrowed']}; Déjà checked that condition against the recorded rows "
+            f"to find that it included {res}.)"
+        )
     if c["confidence"] == "possible":
-        text = ("Possible conflict. " + text + f" Déjà is not certain: one query covered {c['broad']} rather than "
-                f"a specific row, so it may not have included the same row.")
+        text = (
+            "Possible conflict. " + text + f" Déjà is not certain: one query covered {c['broad']} rather than "
+            f"a specific row, so it may not have included the same row."
+        )
     if reason:
         text += f" The app reported: {reason}."
     if len(conflicts) > 1:
@@ -987,8 +1260,11 @@ def _moments(conflicts, touches, names, labels, requests=None):
         if t["resource"].endswith("*]"):  # iterating / len() of tracked in-memory state
             res = "all of " + _label(t["resource"].split("[", 1)[0], labels)
         if t["kind"] == "read":
-            text = (f"{who} calls {res} → {t.get('result')}" if t.get("op") == "http.send"
-                    else f"{who} reads {res} → {short(codec.encode(t['value']))}")
+            text = (
+                f"{who} calls {res} → {t.get('result')}"
+                if t.get("op") == "http.send"
+                else f"{who} reads {res} → {short(codec.encode(t['value']))}"
+            )
         elif t.get("op") == "http.send":
             text = f"{who} calls {res} → {t.get('result')}"
         elif t["kind"] == "write":
@@ -999,7 +1275,17 @@ def _moments(conflicts, touches, names, labels, requests=None):
             text += f" (message {t['message']})"
         if t.get("thread"):
             text += " (in a worker thread)"
-        out.append({"seq": t["seq"], "t": t["t"], "req": t["req"], "who": who, "text": text,
-                    "warning": f"before the other {other} saved its change" if t["seq"] == stale_seq else None,
-                    "in_conflict": t["seq"] in c["seqs"], "resource": t["resource"], "kind": t["kind"]})
+        out.append(
+            {
+                "seq": t["seq"],
+                "t": t["t"],
+                "req": t["req"],
+                "who": who,
+                "text": text,
+                "warning": f"before the other {other} saved its change" if t["seq"] == stale_seq else None,
+                "in_conflict": t["seq"] in c["seqs"],
+                "resource": t["resource"],
+                "kind": t["kind"],
+            }
+        )
     return out

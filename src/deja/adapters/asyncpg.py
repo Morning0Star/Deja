@@ -87,8 +87,9 @@ def _wrap_tx_start(original):
     def start(self, *args, **kwargs):
         if passthrough():
             return original(self, *args, **kwargs)
-        return io_call("pg.tx.start", _tx_key(getattr(self, "_isolation", None)),
-                       lambda: original(self, *args, **kwargs))
+        return io_call(
+            "pg.tx.start", _tx_key(getattr(self, "_isolation", None)), lambda: original(self, *args, **kwargs)
+        )
 
     start.__wrapped__ = original
     return start
@@ -137,8 +138,9 @@ def _wrap_prepare(original):
     async def prepare(self, query, *args, **kwargs):
         if passthrough():
             return await original(self, query, *args, **kwargs)
-        stmt = await io_call("pg.prepare", ("prepare", query), lambda: original(self, query, *args, **kwargs),
-                             encode=lambda _: None)
+        stmt = await io_call(
+            "pg.prepare", ("prepare", query), lambda: original(self, query, *args, **kwargs), encode=lambda _: None
+        )
         cat = _catalog()
         if cat is not None and query not in cat and len(cat) < CATALOG_LIMIT:
             try:
@@ -206,8 +208,12 @@ def _wrap_cursor(op, name, nargs=False):
             if passthrough():
                 return original(self, *args, **kwargs)
             tag = f"{name}:{args[0]}" if nargs and args else name
-            return io_call(op, (tag, self._query, self._args), lambda: original(self, *args, **kwargs),
-                           encode=(lambda _: None) if name == "cursor.open" else codec.encode)
+            return io_call(
+                op,
+                (tag, self._query, self._args),
+                lambda: original(self, *args, **kwargs),
+                encode=(lambda _: None) if name == "cursor.open" else codec.encode,
+            )
 
         method.__name__ = original.__name__
         method.__wrapped__ = original
@@ -282,13 +288,16 @@ def _wrap_add_listener(original):
             return await original(self, channel, callback)
         lid = rec.next_listener()
         if inspect.iscoroutinefunction(callback):
+
             async def wrapper(con, pid, ch, payload):
                 rec.notify(lid, pid, ch, payload)
                 return await callback(con, pid, ch, payload)
         else:
+
             def wrapper(con, pid, ch, payload):
                 rec.notify(lid, pid, ch, payload)
                 return callback(con, pid, ch, payload)
+
         _listener_wrappers[(id(self), channel, callback)] = wrapper
         return await original(self, channel, wrapper)
 
@@ -299,13 +308,16 @@ def _wrap_add_listener(original):
 def _callback_wrapper(callback, before):
     """``callback`` (sync or async) preceded by ``before(*args)``."""
     if inspect.iscoroutinefunction(callback):
+
         async def wrapper(*args):
             before(*args)
             return await callback(*args)
     else:
+
         def wrapper(*args):
             before(*args)
             return callback(*args)
+
     return wrapper
 
 
@@ -318,6 +330,7 @@ def _log_fields(message):
 
 def _wrap_add_special(kind):
     """add_log_listener / add_termination_listener: note when the callback runs (``kind`` is "log" or "term")."""
+
     def make(original):
         def add(self, callback):
             rec = getattr(_get_loop(), "deja", None)
@@ -508,8 +521,13 @@ class FakeConnection:
         return method
 
     async def prepare(self, query, *args, **kwargs):
-        return await io_call("pg.prepare", ("prepare", query), None, decode=lambda _: FakePreparedStatement(query),
-                             default=lambda: FakePreparedStatement(query))
+        return await io_call(
+            "pg.prepare",
+            ("prepare", query),
+            None,
+            decode=lambda _: FakePreparedStatement(query),
+            default=lambda: FakePreparedStatement(query),
+        )
 
     def cursor(self, query, *args, prefetch=None, timeout=None, record_class=None):
         return FakeCursorFactory(query, args)
@@ -684,7 +702,9 @@ def install():
             if replaying():
                 await io_call("pg.connect", ("pg.connect",), None)
                 return FakeConnection()
-            return await io_call("pg.connect", ("pg.connect",), lambda: original(*args, **kwargs), encode=lambda _: None)
+            return await io_call(
+                "pg.connect", ("pg.connect",), lambda: original(*args, **kwargs), encode=lambda _: None
+            )
 
         return connect
 

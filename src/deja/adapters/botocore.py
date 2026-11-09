@@ -20,7 +20,7 @@ class Body:
     def read(self, amt=None):
         if amt is None or amt < 0:
             amt = len(self._data) - self._pos
-        out = self._data[self._pos:self._pos + amt]
+        out = self._data[self._pos : self._pos + amt]
         self._pos += len(out)
         return out
 
@@ -29,7 +29,7 @@ class Body:
             yield self.read(chunk_size)
 
     def iter_lines(self, chunk_size=1024, keepends=False):
-        rest = self._data[self._pos:]
+        rest = self._data[self._pos :]
         self._pos = len(self._data)
         yield from rest.splitlines(keepends)
 

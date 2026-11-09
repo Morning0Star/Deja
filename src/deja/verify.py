@@ -35,18 +35,24 @@ class Verdict:
         if r.followed and r.same_responses:
             return "the recorded race happened again"
         if r.divergence:
-            return ("the replay could not take the recorded steps: the code now orders these requests differently "
-                    "(" + r.divergence.split(":", 1)[0] + ")")
+            return (
+                "the replay could not take the recorded steps: the code now orders these requests differently "
+                "(" + r.divergence.split(":", 1)[0] + ")"
+            )
         changed = [rid for rid in r.recorded if r.replayed.get(rid) != r.recorded[rid]]
         if changed:
             return "the requests ran in the recorded order but answered differently: " + ", ".join(
-                f"request {rid} {_fmt(r.recorded[rid])} -> {_fmt(r.replayed.get(rid))}" for rid in changed[:4])
+                f"request {rid} {_fmt(r.recorded[rid])} -> {_fmt(r.replayed.get(rid))}" for rid in changed[:4]
+            )
         return "the replay took different I/O calls: " + "; ".join(r.io_misses[:3])
 
     def summary(self) -> str:
         n = len(self.results)
-        head = (f"FIXED: the race no longer reproduces ({n} of {n} replays differ from the recording)" if self.fixed
-                else f"STILL THERE: {self.reproduced} of {n} replays reproduced the recorded race")
+        head = (
+            f"FIXED: the race no longer reproduces ({n} of {n} replays differ from the recording)"
+            if self.fixed
+            else f"STILL THERE: {self.reproduced} of {n} replays reproduced the recorded race"
+        )
         lines = [head, "", "The race: " + self.story, "", "What happened in replay: " + self.how(self.results[-1])]
         notes = [ln for ln in self.results[-1].summary().splitlines() if ln.startswith("NOTE")]
         return "\n".join(lines + ([""] + notes if notes else []))
@@ -74,8 +80,10 @@ def diff(recording: str, old_factory, new_factory, deadline_s: float = 10.0) -> 
     schedule = Schedule.load(recording)
     a = replay(schedule, old_factory, deadline_s=deadline_s)
     b = replay(schedule, new_factory, deadline_s=deadline_s)
-    lines = [f"old: followed {a.steps_followed}/{a.steps_expected} steps" + (" (diverged)" if a.divergence else ""),
-             f"new: followed {b.steps_followed}/{b.steps_expected} steps" + (" (diverged)" if b.divergence else "")]
+    lines = [
+        f"old: followed {a.steps_followed}/{a.steps_expected} steps" + (" (diverged)" if a.divergence else ""),
+        f"new: followed {b.steps_followed}/{b.steps_expected} steps" + (" (diverged)" if b.divergence else ""),
+    ]
     if b.divergence and not a.divergence:
         lines.append("the new version can't take the recorded steps: " + b.divergence.split(";", 1)[0])
     for rid in sorted(set(a.replayed) | set(b.replayed) | set(a.recorded)):

@@ -22,8 +22,9 @@ from deja.fileformat import read  # noqa: E402
 from deja.group import merge  # noqa: E402
 from deja.replay import replay  # noqa: E402
 
-pytestmark = pytest.mark.skipif(not reachable("127.0.0.1", int(PG_DSN.rsplit(":", 1)[1].split("/")[0])),
-                                reason="test Postgres not running")
+pytestmark = pytest.mark.skipif(
+    not reachable("127.0.0.1", int(PG_DSN.rsplit(":", 1)[1].split("/")[0])), reason="test Postgres not running"
+)
 
 
 def booking_app(dsn):

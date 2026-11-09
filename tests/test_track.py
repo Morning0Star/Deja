@@ -84,7 +84,6 @@ def test_untracked_outside_a_request_and_rejects_slots():
         deja.track(S(), "s")
 
 
-
 def test_iteration_and_len_report_a_whole_container_read():
     d = deja.track({"a": 1, "b": 2}, "carts")
     users = deja.track(["ada"], "users", key="username")
@@ -98,6 +97,7 @@ def test_iteration_and_len_report_a_whole_container_read():
     got = [(r, k, codec.decode(v)) for r, k, v in got]
     assert ("carts[*]", "read", ["a", "b"]) in got and ("users[username=*]", "read", ["ada"]) in got
     import copy
+
     assert type(copy.copy(d)) is dict and type(copy.deepcopy(users)) is list
 
 
@@ -155,8 +155,11 @@ def test_deque_list_and_set_mutations():
     got = touches_from(work)
     assert ("jobs[j1]", "write", "j1") in got and ("jobs[j0]", "write", None) in got
     assert [g for g in got if g[0].startswith("seats[s")] == [
-        ("seats[s1]", "write", "s1"), ("seats[s2]", "write", "s2"), ("seats[s0]", "write", "s0"),
-        ("seats[s2]", "write", None)]
+        ("seats[s1]", "write", "s1"),
+        ("seats[s2]", "write", "s2"),
+        ("seats[s0]", "write", "s0"),
+        ("seats[s2]", "write", None),
+    ]
     assert ("seats[*]", "write", None) in got  # assignment by index
     assert ("tags[b]", "write", "b") in got and ("tags[c]", "write", "c") in got and ("tags[a]", "write", None) in got
     assert ("tags[missing]", "read", False) in got and ("tags[*]", "write", None) in got

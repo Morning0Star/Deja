@@ -23,8 +23,10 @@ PUSHED = "kafka"
 
 
 def _enc_meta(md):
-    return {"__t": "kafka_meta", "v": [md.topic, md.partition, md.offset, md.timestamp, md.timestamp_type,
-                                       md.log_start_offset]}
+    return {
+        "__t": "kafka_meta",
+        "v": [md.topic, md.partition, md.offset, md.timestamp, md.timestamp_type, md.log_start_offset],
+    }
 
 
 def _dec_meta(v):
@@ -35,14 +37,26 @@ def _dec_meta(v):
 
 
 def _enc_rec(r):
-    return [r.topic, r.partition, r.offset, r.timestamp, r.timestamp_type, codec.encode(r.key), codec.encode(r.value),
-            r.checksum, r.serialized_key_size, r.serialized_value_size, codec.encode(list(r.headers or []))]
+    return [
+        r.topic,
+        r.partition,
+        r.offset,
+        r.timestamp,
+        r.timestamp_type,
+        codec.encode(r.key),
+        codec.encode(r.value),
+        r.checksum,
+        r.serialized_key_size,
+        r.serialized_value_size,
+        codec.encode(list(r.headers or [])),
+    ]
 
 
 def _dec_rec(v):
     t, p, o, ts, tt, k, val, ck, ks, vs, h = v
-    return ConsumerRecord(t, p, o, ts, tt, codec.decode(k), codec.decode(val), ck, ks, vs,
-                          [tuple(x) for x in codec.decode(h)])
+    return ConsumerRecord(
+        t, p, o, ts, tt, codec.decode(k), codec.decode(val), ck, ks, vs, [tuple(x) for x in codec.decode(h)]
+    )
 
 
 def _enc_many(batch):
@@ -74,9 +88,13 @@ def install():
         async def send_and_wait(self, topic, value=None, key=None, *args, **kwargs):
             if passthrough():
                 return await original(self, topic, value, key, *args, **kwargs)
-            return await io_call("kafka.send", ("kafka", topic, codec.encode(key), codec.encode(value)),
-                                 lambda: original(self, topic, value, key, *args, **kwargs), encode=_enc_meta,
-                                 decode=_dec_meta)
+            return await io_call(
+                "kafka.send",
+                ("kafka", topic, codec.encode(key), codec.encode(value)),
+                lambda: original(self, topic, value, key, *args, **kwargs),
+                encode=_enc_meta,
+                decode=_dec_meta,
+            )
 
         return send_and_wait
 
@@ -89,8 +107,13 @@ def install():
                 fut = await original(self, topic, value, key, *args, **kwargs)
                 return await fut
 
-            md = await io_call("kafka.send", ("kafka", topic, codec.encode(key), codec.encode(value)), real,
-                               encode=_enc_meta, decode=_dec_meta)
+            md = await io_call(
+                "kafka.send",
+                ("kafka", topic, codec.encode(key), codec.encode(value)),
+                real,
+                encode=_enc_meta,
+                decode=_dec_meta,
+            )
             done = asyncio.get_running_loop().create_future()
             done.set_result(md)
             return done
@@ -105,8 +128,14 @@ def install():
                 lid = _consumer_id(self)
                 rec, path = _context()
                 if path is not None and path[0] == "q":  # inside a request: an ordinary recorded call
-                    return await io_call(f"kafka.{name}", ("kafka", name), lambda: original(self, *args, **kwargs),
-                                         encode=encode, decode=decode, default=empty)
+                    return await io_call(
+                        f"kafka.{name}",
+                        ("kafka", name),
+                        lambda: original(self, *args, **kwargs),
+                        encode=encode,
+                        decode=decode,
+                        default=empty,
+                    )
                 if replaying():
                     got = await rec.pubsub_read(lid, True, None)
                     return decode(got)

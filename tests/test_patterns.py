@@ -88,8 +88,9 @@ def test_torn_read_sees_a_transfer_half_done(tmp_path):
 # ---------------------------------------------------------------- Postgres: deadlock, isolation
 from test_adapters import DEAD_PORT_DSN, PG_DSN, reachable  # noqa: E402
 
-pg = pytest.mark.skipif(not reachable("127.0.0.1", int(PG_DSN.rsplit(":", 1)[1].split("/")[0])),
-                        reason="test Postgres not running")
+pg = pytest.mark.skipif(
+    not reachable("127.0.0.1", int(PG_DSN.rsplit(":", 1)[1].split("/")[0])), reason="test Postgres not running"
+)
 
 
 def lock_app(dsn):
@@ -103,7 +104,9 @@ def lock_app(dsn):
             state["pool"] = await asyncpg.create_pool(dsn, min_size=2, max_size=2)
             async with state["pool"].acquire() as c:
                 await c.execute("CREATE TABLE IF NOT EXISTS deja_acct (id int PRIMARY KEY, bal int)")
-                await c.execute("INSERT INTO deja_acct VALUES (1, 100), (2, 100) ON CONFLICT (id) DO UPDATE SET bal = 100")
+                await c.execute(
+                    "INSERT INTO deja_acct VALUES (1, 100), (2, 100) ON CONFLICT (id) DO UPDATE SET bal = 100"
+                )
             yield
             await state["pool"].close()
 
@@ -140,8 +143,19 @@ def test_deadlock_is_explained_and_replays_without_the_database(tmp_path):
 
 
 def _io(path, op, sql, params, value, t, detail=None):
-    return [(ev.IO_START, path, op, t),
-            (ev.IO_END, path, op, "d", "ok", value, t + 1, detail if detail is not None else {"sql": sql, "params": params})]
+    return [
+        (ev.IO_START, path, op, t),
+        (
+            ev.IO_END,
+            path,
+            op,
+            "d",
+            "ok",
+            value,
+            t + 1,
+            detail if detail is not None else {"sql": sql, "params": params},
+        ),
+    ]
 
 
 def _lost_update(level):

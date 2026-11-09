@@ -45,8 +45,9 @@ def make_app():
 async def lifespan(app, state):
     """Drive the ASGI lifespan (through the middleware, as uvicorn does)."""
     inbox, outbox = asyncio.Queue(), asyncio.Queue()
-    task = asyncio.ensure_future(app({"type": "lifespan", "asgi": {"version": "3.0"}, "state": state},
-                                     inbox.get, outbox.put))
+    task = asyncio.ensure_future(
+        app({"type": "lifespan", "asgi": {"version": "3.0"}, "state": state}, inbox.get, outbox.put)
+    )
     await inbox.put({"type": "lifespan.startup"})
     assert (await outbox.get())["type"] == "lifespan.startup.complete"
     return task, inbox

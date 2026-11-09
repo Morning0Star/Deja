@@ -37,7 +37,8 @@ def bench_pair(a, b):
     for _ in range(REPEAT):
         ta.append(once(a))
         tb.append(once(b))
-    ta.sort(); tb.sort()
+    ta.sort()
+    tb.sort()
     return ta[len(ta) // 2], tb[len(tb) // 2]
 
 
@@ -46,5 +47,5 @@ if __name__ == "__main__":
     steps = N * (K + 1)
     plain, rec = bench_pair(base, lambda: recording_loop())
     print(f"{sys.version.split()[0]} {sys.platform} {base.__name__} steps={steps}")
-    print(f"  plain      {plain*1e3:8.1f} ms  {plain/steps*1e9:6.0f} ns/step")
-    print(f"  recording  {rec*1e3:8.1f} ms  {rec/steps*1e9:6.0f} ns/step  (+{(rec/plain-1)*100:.1f}%)")
+    print(f"  plain      {plain * 1e3:8.1f} ms  {plain / steps * 1e9:6.0f} ns/step")
+    print(f"  recording  {rec * 1e3:8.1f} ms  {rec / steps * 1e9:6.0f} ns/step  (+{(rec / plain - 1) * 100:.1f}%)")

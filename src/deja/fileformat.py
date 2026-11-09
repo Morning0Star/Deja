@@ -61,8 +61,10 @@ def read(path: str) -> tuple[dict, list]:
         events = [tuple(_decode(json.loads(line))) for line in f]
     n = version(header)
     if n > FORMAT:
-        raise FormatError(f"{path} was recorded by a newer Déjà ({header.get('deja')}, format deja/{n}); "
-                          f"this one reads up to deja/{FORMAT}: upgrade deja-replay")
+        raise FormatError(
+            f"{path} was recorded by a newer Déjà ({header.get('deja')}, format deja/{n}); "
+            f"this one reads up to deja/{FORMAT}: upgrade deja-replay"
+        )
     while n < FORMAT:
         header, events = UPGRADES[n](header, events)
         n += 1

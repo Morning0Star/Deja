@@ -228,8 +228,9 @@ class ReplayRecorder(Recorder):
                 self._gate.wait(min(left, 0.05))
             self._granted[path] = k + 1
             self._gate.notify_all()
-            while (self._arrived[path] <= k + 1 and path not in self._finished
-                   and path not in self._parked):  # doing it, then on to the next (or waiting for the loop)
+            while (
+                self._arrived[path] <= k + 1 and path not in self._finished and path not in self._parked
+            ):  # doing it, then on to the next (or waiting for the loop)
                 left = end - _real_monotonic()
                 if left <= 0:
                     return False
@@ -277,7 +278,6 @@ class ReplayRecorder(Recorder):
         self.read_misses.append((path, source))
         return value
 
-
     def outside(self, op, digest):
         """The recorded result of an out-of-request call (see adapters._outside): the n-th call gets the n-th result
         (the last one once they run out), or None."""
@@ -306,8 +306,10 @@ class ReplayRecorder(Recorder):
             return decode(None)
         entry = queue.popleft()
         if entry.op != op or entry.digest != digest:
-            self.io_misses.append(f"{path}: recorded {entry.op} but replay called {op}"
-                                  + ("" if entry.op != op else " with different arguments"))
+            self.io_misses.append(
+                f"{path}: recorded {entry.op} but replay called {op}"
+                + ("" if entry.op != op else " with different arguments")
+            )
         if entry.kind == "err":
             raise codec.decode_exc(entry.value)
         return decode(entry.value)
@@ -331,8 +333,12 @@ class ReplayRecorder(Recorder):
 
         def launch():  # from a plain callback: the task is a root, environment work, not a child of the request
             task = loop.create_task(real(), context=ctx)
-            task.add_done_callback(lambda t: done.cancelled() or (
-                done.set_exception(t.exception()) if t.exception() else done.set_result(t.result())))
+            task.add_done_callback(
+                lambda t: (
+                    done.cancelled()
+                    or (done.set_exception(t.exception()) if t.exception() else done.set_result(t.result()))
+                )
+            )
 
         loop.call_soon(launch)
         return await done
@@ -360,8 +366,10 @@ class ReplayRecorder(Recorder):
             return None
         entry = queue.popleft()
         if entry.op != op or entry.digest != digest:
-            self.io_misses.append(f"{path}: recorded {entry.op} but replay called {op}"
-                                  + ("" if entry.op != op else " with different arguments"))
+            self.io_misses.append(
+                f"{path}: recorded {entry.op} but replay called {op}"
+                + ("" if entry.op != op else " with different arguments")
+            )
         if entry.yielded:
             await self._suspend_once()
         if entry.kids:
@@ -475,10 +483,12 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
         ex = self._default_executor
         threads = sum(t.is_alive() for t in getattr(ex, "_threads", ())) if ex else 0
         queued = ex._work_queue.qsize() if ex and hasattr(ex, "_work_queue") else 0
-        return (f"replay diverged at step {i} of {len(self.schedule)}: expected {expected}, "
-                f"ready request tasks {ready or 'none'}; last steps {recent}; "
-                f"[diag: ready handles {len(self._ready)}, timers {len(self._scheduled)}, "
-                f"executor threads {threads}, queued jobs {queued}, virtual time {self.vt:.3f}]")
+        return (
+            f"replay diverged at step {i} of {len(self.schedule)}: expected {expected}, "
+            f"ready request tasks {ready or 'none'}; last steps {recent}; "
+            f"[diag: ready handles {len(self._ready)}, timers {len(self._scheduled)}, "
+            f"executor threads {threads}, queued jobs {queued}, virtual time {self.vt:.3f}]"
+        )
 
     def _deliver(self, lid, pid, channel, payload):
         """Hand a recorded notification to the listener the replayed app registered in the same order."""
@@ -494,8 +504,9 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
             return
 
         listeners = self.deja.listeners
-        entry = listeners.get(lid) or (next((x for x in listeners.values() if x[1] == channel), None)
-                                        if pid not in ("log", "term") else None)
+        entry = listeners.get(lid) or (
+            next((x for x in listeners.values() if x[1] == channel), None) if pid not in ("log", "term") else None
+        )
         if entry is None:
             self.deja.io_misses.append(f"notification on {channel}: no listener was registered during replay")
             return
@@ -678,10 +689,19 @@ class ASGIHarness:
             return await self._serve_websocket(rid, target, headers)
         path, _, query = target.partition("?")
         scope = {
-            "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": method, "scheme": "http",
-            "path": path, "raw_path": path.encode("latin-1"), "query_string": query.encode("latin-1"),
-            "root_path": "", "headers": [(k.encode("latin-1"), v.encode("latin-1")) for k, v in headers],
-            "client": ("127.0.0.1", 50000), "server": ("deja-replay", 80), "state": dict(self.state),
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": method,
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode("latin-1"),
+            "query_string": query.encode("latin-1"),
+            "root_path": "",
+            "headers": [(k.encode("latin-1"), v.encode("latin-1")) for k, v in headers],
+            "client": ("127.0.0.1", 50000),
+            "server": ("deja-replay", 80),
+            "state": dict(self.state),
         }
         sent = False
         status, out = None, []
@@ -719,10 +739,18 @@ class ASGIHarness:
 
         path, _, query = target.partition("?")
         scope = {
-            "type": "websocket", "asgi": {"version": "3.0"}, "http_version": "1.1", "scheme": "ws", "path": path,
-            "raw_path": path.encode("latin-1"), "query_string": query.encode("latin-1"), "root_path": "",
+            "type": "websocket",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "scheme": "ws",
+            "path": path,
+            "raw_path": path.encode("latin-1"),
+            "query_string": query.encode("latin-1"),
+            "root_path": "",
             "headers": [(k.encode("latin-1"), v.encode("latin-1")) for k, v in headers],
-            "client": ("127.0.0.1", 50000), "server": ("deja-replay", 80), "subprotocols": [],
+            "client": ("127.0.0.1", 50000),
+            "server": ("deja-replay", 80),
+            "subprotocols": [],
             "state": dict(self.state),
         }
         rec, sent, me = self.loop.deja, [], f"q{rid}"
@@ -846,20 +874,31 @@ class ReplayResult:
         return all(self.replayed.get(rid) == resp for rid, resp in self.recorded.items())
 
     def summary(self) -> str:
-        lines = [f"followed {self.steps_followed}/{self.steps_expected} recorded steps"
-                 + (f", {len(self.extra_steps)} extra" if self.extra_steps else "")]
+        lines = [
+            f"followed {self.steps_followed}/{self.steps_expected} recorded steps"
+            + (f", {len(self.extra_steps)} extra" if self.extra_steps else "")
+        ]
         if self.tail_skipped:
-            lines.append(f"NOTE: {len(self.tail_skipped)} recorded step(s) came after their task had finished in replay "
-                         f"({', '.join(sorted(set(self.tail_skipped)))}): library wake-ups after the app's work")
+            lines.append(
+                f"NOTE: {len(self.tail_skipped)} recorded step(s) came after their task had finished in replay "
+                f"({', '.join(sorted(set(self.tail_skipped)))}): library wake-ups after the app's work"
+            )
         if self.skipped:
-            lines.append("NOTE: left out " + ", ".join(self.skipped) + ": they began before the recording window "
-                         "(long WebSocket connections); a bigger buffer (Recorder(max_events=...)) keeps them")
+            lines.append(
+                "NOTE: left out " + ", ".join(self.skipped) + ": they began before the recording window "
+                "(long WebSocket connections); a bigger buffer (Recorder(max_events=...)) keeps them"
+            )
         if self.hash_seed_differs:
-            lines.append(f"NOTE: recorded with PYTHONHASHSEED={self.hash_seed}; set the same value to replay set "
-                         "ordering exactly (deja replay does this itself)")
+            lines.append(
+                f"NOTE: recorded with PYTHONHASHSEED={self.hash_seed}; set the same value to replay set "
+                "ordering exactly (deja replay does this itself)"
+            )
         if self.code_changed:
-            lines.append("NOTE: the app's code differs from the recording in " + ", ".join(self.code_changed[:8])
-                         + (" and more" if len(self.code_changed) > 8 else ""))
+            lines.append(
+                "NOTE: the app's code differs from the recording in "
+                + ", ".join(self.code_changed[:8])
+                + (" and more" if len(self.code_changed) > 8 else "")
+            )
         if self.divergence:
             lines.append("DIVERGED: " + self.divergence)
         for m in self.io_misses[:5]:
@@ -918,7 +957,7 @@ def replay(recording, app_factory, deadline_s: float = 10.0, track: bool = True,
         # as the middleware does on the first request: worker threads are ordered by tracked accesses, and the
         # app's clock names must point at the recording wrappers to get the recorded values back
         rules = (schedule.header.get("catalog") or {}).get("track") or {}
-        for a in (apps if not isinstance(app, dict) else [target]):
+        for a in apps if not isinstance(app, dict) else [target]:
             _, current = prepare(a, track and rules.get("on", True), Rules(rules.get("skip"), rules.get("only")))
         recorded = (schedule.header.get("catalog") or {}).get("source") or {}
         loop.code_changed = changed(recorded, current) if recorded else []

@@ -70,9 +70,18 @@ def flag(reason: str = "") -> None:
 
 
 class DejaMiddleware:
-    def __init__(self, app, directory: str = "deja-recordings", on_dump=None, track: bool = True,
-                 track_skip=(), track_only=None, background: bool = True, group: str | None = None,
-                 worker: str | None = None):
+    def __init__(
+        self,
+        app,
+        directory: str = "deja-recordings",
+        on_dump=None,
+        track: bool = True,
+        track_skip=(),
+        track_only=None,
+        background: bool = True,
+        group: str | None = None,
+        worker: str | None = None,
+    ):
         self.app = app
         self.directory = directory
         self.on_dump = on_dump  # optional callback(path, reason) e.g. for logging or tests
@@ -80,7 +89,10 @@ class DejaMiddleware:
         self.background = background  # order the app's background tasks (started at startup) like requests
         self.group = group or os.environ.get("DEJA_GROUP")  # shared by worker processes (see deja.group)
         self.worker = worker or f"pid{os.getpid()}"
-        self.track_rules = {"skip": list(track_skip or ()), "only": list(track_only) if track_only is not None else None}
+        self.track_rules = {
+            "skip": list(track_skip or ()),
+            "only": list(track_only) if track_only is not None else None,
+        }
         self.tracked: list = []
         self._warned = False
         self._scanned = False
@@ -108,8 +120,9 @@ class DejaMiddleware:
             from .autotrack import Rules, prepare
 
             rec.catalog["track"] = {**self.track_rules, "on": self.track}  # replay applies the same rules
-            self.tracked, rec.catalog["source"] = prepare(scope.get("app") or self.app, self.track,
-                                                          Rules(**self.track_rules))
+            self.tracked, rec.catalog["source"] = prepare(
+                scope.get("app") or self.app, self.track, Rules(**self.track_rules)
+            )
             if self.group:
                 from .group import Watcher
 
@@ -143,8 +156,9 @@ class DejaMiddleware:
         target = (scope.get("raw_path") or scope["path"].encode()).decode("latin-1")
         if scope.get("query_string"):
             target += "?" + scope["query_string"].decode("latin-1")
-        rid = rec.request_start(scope.get("method", ""), target, headers,
-                                body if size <= MAX_BODY else body + b"...<truncated>")
+        rid = rec.request_start(
+            scope.get("method", ""), target, headers, body if size <= MAX_BODY else body + b"...<truncated>"
+        )
         state = _State(rid)
         token = current_request.set(state)
         status = None

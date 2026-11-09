@@ -91,13 +91,16 @@ def record_shop(calls, path):
     return out
 
 
-@pytest.mark.parametrize("url, pattern, resource", [
-    ("/hold/x", "lost-update", "shop_services.HOLDS[x]"),        # defaultdict, in a helper module
-    ("/sell/x", "lost-update", "shop_services.SALES[x]"),        # Counter
-    ("/queue/j1", "check-then-act", "shop_services.QUEUE[j1]"),  # deque
-    ("/visit", "lost-update", "shop_services.visits"),           # a module variable reassigned with `global`
-    ("/pay", "lost-update", "shop_services.wallet.balance"),     # an attribute of an app object
-])
+@pytest.mark.parametrize(
+    "url, pattern, resource",
+    [
+        ("/hold/x", "lost-update", "shop_services.HOLDS[x]"),  # defaultdict, in a helper module
+        ("/sell/x", "lost-update", "shop_services.SALES[x]"),  # Counter
+        ("/queue/j1", "check-then-act", "shop_services.QUEUE[j1]"),  # deque
+        ("/visit", "lost-update", "shop_services.visits"),  # a module variable reassigned with `global`
+        ("/pay", "lost-update", "shop_services.wallet.balance"),  # an attribute of an app object
+    ],
+)
 def test_state_in_helper_modules_is_found(tmp_path, url, pattern, resource):
     import shop_app
 

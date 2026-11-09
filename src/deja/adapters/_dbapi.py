@@ -37,7 +37,7 @@ def to_dollar(sql, params):
 
     pattern = re.compile(r"%%|%\(\w+\)s|%s|\?|(?<![:\w]):[A-Za-z_]\w*")
     for m in _QUOTED.finditer(sql):
-        out.append(pattern.sub(repl, sql[pos:m.start()]))
+        out.append(pattern.sub(repl, sql[pos : m.start()]))
         out.append(m.group(0))
         pos = m.end()
     out.append(pattern.sub(repl, sql[pos:]))
@@ -60,16 +60,26 @@ def _row(r):
 
 
 def encode_result(res):
-    return {"__t": "dbapi", "columns": res.get("columns"), "rowcount": res.get("rowcount"),
-            "lastrowid": res.get("lastrowid"), "status": res.get("status"),
-            "rows": None if res.get("rows") is None else [_row(r) for r in res["rows"]]}
+    return {
+        "__t": "dbapi",
+        "columns": res.get("columns"),
+        "rowcount": res.get("rowcount"),
+        "lastrowid": res.get("lastrowid"),
+        "status": res.get("status"),
+        "rows": None if res.get("rows") is None else [_row(r) for r in res["rows"]],
+    }
 
 
 def decode_result(v):
     if not isinstance(v, dict):
         return {"rows": None, "columns": None, "rowcount": -1, "lastrowid": None, "status": None}
-    return {"columns": v.get("columns"), "rowcount": v.get("rowcount", -1), "lastrowid": v.get("lastrowid"),
-            "status": v.get("status"), "rows": None if v.get("rows") is None else [codec.decode(r) for r in v["rows"]]}
+    return {
+        "columns": v.get("columns"),
+        "rowcount": v.get("rowcount", -1),
+        "lastrowid": v.get("lastrowid"),
+        "status": v.get("status"),
+        "rows": None if v.get("rows") is None else [codec.decode(r) for r in v["rows"]],
+    }
 
 
 async def run(op, flavor, cur, sql, params, real_execute, fetchall, describe):
@@ -83,15 +93,24 @@ async def run(op, flavor, cur, sql, params, real_execute, fetchall, describe):
         rows = await fetchall() if cols else None
         return {"rows": rows, "columns": cols, "rowcount": rowcount, "lastrowid": lastrowid, "status": status}
 
-    res = await io_call(op, (flavor, text, values), real, encode=encode_result, decode=decode_result,
-                        default=lambda: decode_result(None))
+    res = await io_call(
+        op,
+        (flavor, text, values),
+        real,
+        encode=encode_result,
+        decode=decode_result,
+        default=lambda: decode_result(None),
+    )
     remember(cur, res)
     return res
 
 
 def remember(cur, res):
-    _cursors[cur] = {"rows": list(res["rows"]) if res.get("rows") is not None else None, "pos": 0, **{
-        k: res.get(k) for k in ("columns", "rowcount", "lastrowid", "status")}}
+    _cursors[cur] = {
+        "rows": list(res["rows"]) if res.get("rows") is not None else None,
+        "pos": 0,
+        **{k: res.get(k) for k in ("columns", "rowcount", "lastrowid", "status")},
+    }
 
 
 def state(cur):
@@ -102,9 +121,9 @@ def fetch(cur, n=None):
     st = _cursors.get(cur)
     rows = st["rows"] or []
     if n is None:
-        out, st["pos"] = rows[st["pos"]:], len(rows)
+        out, st["pos"] = rows[st["pos"] :], len(rows)
         return out
-    out = rows[st["pos"]:st["pos"] + n]
+    out = rows[st["pos"] : st["pos"] + n]
     st["pos"] += len(out)
     return out
 

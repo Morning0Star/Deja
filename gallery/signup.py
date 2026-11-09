@@ -43,7 +43,9 @@ class PgStore:
 
     async def open(self):
         self.pool = await _pg.pool()
-        await self.pool.execute("CREATE TABLE IF NOT EXISTS gallery_users (username text NOT NULL)")  # no UNIQUE: that's the bug
+        await self.pool.execute(
+            "CREATE TABLE IF NOT EXISTS gallery_users (username text NOT NULL)"
+        )  # no UNIQUE: that's the bug
 
     async def reset(self):
         await self.pool.execute("TRUNCATE gallery_users")

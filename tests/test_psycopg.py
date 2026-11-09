@@ -18,8 +18,9 @@ from deja.fileformat import read  # noqa: E402
 from deja.loop import RecordingSelectorLoop  # noqa: E402
 from deja.replay import replay  # noqa: E402
 
-pytestmark = pytest.mark.skipif(not reachable("127.0.0.1", int(PG_DSN.rsplit(":", 1)[1].split("/")[0])),
-                                reason="test Postgres not running")
+pytestmark = pytest.mark.skipif(
+    not reachable("127.0.0.1", int(PG_DSN.rsplit(":", 1)[1].split("/")[0])), reason="test Postgres not running"
+)
 DEAD = "postgresql://nobody@127.0.0.1:1/none"
 
 
@@ -80,8 +81,9 @@ def signup_app(dsn, pooled):
                     if taken:
                         return {"ok": False}
                     await asyncio.sleep(0.02)
-                    await cur.execute("INSERT INTO deja_users (name, email) VALUES (%(n)s, %(e)s)",
-                                      {"n": name, "e": f"{name}@x"})
+                    await cur.execute(
+                        "INSERT INTO deja_users (name, email) VALUES (%(n)s, %(e)s)", {"n": name, "e": f"{name}@x"}
+                    )
                     return {"ok": True, "rows": cur.rowcount}
 
         return app
@@ -91,7 +93,9 @@ def signup_app(dsn, pooled):
 
 @pytest.mark.parametrize("pooled", [False, True, "tight"])
 def test_psycopg_check_then_insert_found_and_replayed(tmp_path, pooled):
-    calls = [("POST", "/signup/ada"), ("POST", "/signup/ada")] + ([("POST", "/signup/bob")] if pooled == "tight" else [])
+    calls = [("POST", "/signup/ada"), ("POST", "/signup/ada")] + (
+        [("POST", "/signup/bob")] if pooled == "tight" else []
+    )
     path, responses = record_concurrently(signup_app(PG_DSN, pooled), calls, str(tmp_path / "p.deja"))
     if pooled != "tight":
         assert [r.json() for r in responses] == [{"ok": True, "rows": 1}] * 2
@@ -108,6 +112,7 @@ def test_psycopg_check_then_insert_found_and_replayed(tmp_path, pooled):
 
 def sync_app(dsn):
     """Blocking psycopg in a plain def endpoint (a worker thread)."""
+
     def factory():
         app = FastAPI()
 
@@ -129,8 +134,9 @@ def test_sync_psycopg_in_threads_replays_without_the_database(tmp_path):
     with psycopg.connect(PG_DSN, autocommit=True) as c:
         c.execute("CREATE TABLE IF NOT EXISTS deja_users (name text, email text)")
         c.execute("DELETE FROM deja_users WHERE name = 'home'")
-    path, responses = record_concurrently(sync_app(PG_DSN), [("POST", "/visit/home"), ("POST", "/visit/home")],
-                                          str(tmp_path / "s.deja"))
+    path, responses = record_concurrently(
+        sync_app(PG_DSN), [("POST", "/visit/home"), ("POST", "/visit/home")], str(tmp_path / "s.deja")
+    )
     assert sorted(r.json()["before"] for r in responses) in ([0, 0], [0, 1])
     r = replay(path, sync_app(DEAD), deadline_s=5)
     assert r.followed and r.same_responses, r.summary()

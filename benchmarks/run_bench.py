@@ -47,8 +47,9 @@ def pin(cmd, cpu):
 
 
 def start(cmd, env, cpu=None):
-    return subprocess.Popen(pin(cmd, cpu), cwd=ROOT, env={**os.environ, **env},
-                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    return subprocess.Popen(
+        pin(cmd, cpu), cwd=ROOT, env={**os.environ, **env}, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+    )
 
 
 def stop(p):
@@ -63,8 +64,19 @@ def stop(p):
 
 def server_cmd(mode):
     loop = "deja.loop:recording_loop" if mode == "on" else "asyncio"
-    return [sys.executable, "-m", "uvicorn", "benchmarks.app:app", "--port", str(APP_PORT), "--loop", loop,
-            "--log-level", "warning", "--no-access-log"]
+    return [
+        sys.executable,
+        "-m",
+        "uvicorn",
+        "benchmarks.app:app",
+        "--port",
+        str(APP_PORT),
+        "--loop",
+        loop,
+        "--log-level",
+        "warning",
+        "--no-access-log",
+    ]
 
 
 def sample(proc, stop_evt, out):
@@ -88,13 +100,33 @@ def k6(args, rate, duration, base, summary_path):
     if args.k6.startswith("docker"):
         outdir = tempfile.mkdtemp(prefix="deja-k6-")
         image = shlex.split(args.k6)[-1]
-        cmd = ["docker", "run", "--rm", "-i", "-v", f"{outdir}:/out", image, "run", "-q", *env_args,
-               "--summary-export", "/out/summary.json", "-"]
+        cmd = [
+            "docker",
+            "run",
+            "--rm",
+            "-i",
+            "-v",
+            f"{outdir}:/out",
+            image,
+            "run",
+            "-q",
+            *env_args,
+            "--summary-export",
+            "/out/summary.json",
+            "-",
+        ]
         res = subprocess.run(cmd, input=open(os.path.join(HERE, "load.js"), "rb").read(), capture_output=True)
         summary_path = os.path.join(outdir, "summary.json")
     else:
-        cmd = [*shlex.split(args.k6), "run", "-q", *env_args, "--summary-export", summary_path,
-               os.path.join(HERE, "load.js")]
+        cmd = [
+            *shlex.split(args.k6),
+            "run",
+            "-q",
+            *env_args,
+            "--summary-export",
+            summary_path,
+            os.path.join(HERE, "load.js"),
+        ]
         if os.path.exists(summary_path):
             os.remove(summary_path)
         res = subprocess.run(pin(cmd, args.load_cpu), capture_output=True)
@@ -125,9 +157,12 @@ def one_run(args, mode, rate):
     failed = m.get("http_req_failed", {})
     cpus = [c for c, _ in samples] or [0]
     return {
-        "mode": mode, "rate": rate,
+        "mode": mode,
+        "rate": rate,
         "rps": reqs.get("rate", 0),
-        "p50": dur.get("p(50)", dur.get("med")), "p95": dur["p(95)"], "p99": dur["p(99)"],
+        "p50": dur.get("p(50)", dur.get("med")),
+        "p95": dur["p(95)"],
+        "p99": dur["p(99)"],
         "failed": failed.get("value", failed.get("rate", 0)),
         "dropped": m.get("dropped_iterations", {}).get("count", 0),
         "cpu": statistics.mean(cpus),
@@ -159,8 +194,21 @@ def main():
     a = p.parse_args()
     rates = [int(r) for r in a.rates.split(",")]
 
-    stub = start([sys.executable, "-m", "uvicorn", "benchmarks.stub:app", "--port", str(STUB_PORT),
-                  "--log-level", "warning", "--no-access-log"], {}, cpu=None)
+    stub = start(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "benchmarks.stub:app",
+            "--port",
+            str(STUB_PORT),
+            "--log-level",
+            "warning",
+            "--no-access-log",
+        ],
+        {},
+        cpu=None,
+    )
     rows = []
     try:
         wait_http(f"http://127.0.0.1:{STUB_PORT}/quote?item=1")
@@ -170,31 +218,44 @@ def main():
                 for mode in order:
                     r = one_run(a, mode, rate)
                     rows.append(r)
-                    print(f"rep {rep + 1} rate {rate:4d} {mode:3s}: {r['rps']:7.1f} req/s  p50 {r['p50']:6.2f}  "
-                          f"p95 {r['p95']:6.2f}  p99 {r['p99']:6.2f} ms  cpu {r['cpu']:5.1f}%  "
-                          f"rss {r['rss_mb']:5.0f} MB  failed {r['failed']:.3f}  dropped {r['dropped']}", flush=True)
+                    print(
+                        f"rep {rep + 1} rate {rate:4d} {mode:3s}: {r['rps']:7.1f} req/s  p50 {r['p50']:6.2f}  "
+                        f"p95 {r['p95']:6.2f}  p99 {r['p99']:6.2f} ms  cpu {r['cpu']:5.1f}%  "
+                        f"rss {r['rss_mb']:5.0f} MB  failed {r['failed']:.3f}  dropped {r['dropped']}",
+                        flush=True,
+                    )
     finally:
         stop(stub)
 
     import platform
-    lines = [f"### Déjà overhead, {platform.system()} {platform.machine()}, Python {platform.python_version()}, "
-             f"{psutil.cpu_count()} CPUs, {a.duration}s per run, median of {a.reps}",
-             "", "| req/s | mode | achieved req/s | p50 ms | p95 ms | p99 ms | CPU % | RSS MB | failed | KB/request |",
-             "|---|---|---|---|---|---|---|---|---|---|"]
+
+    lines = [
+        f"### Déjà overhead, {platform.system()} {platform.machine()}, Python {platform.python_version()}, "
+        f"{psutil.cpu_count()} CPUs, {a.duration}s per run, median of {a.reps}",
+        "",
+        "| req/s | mode | achieved req/s | p50 ms | p95 ms | p99 ms | CPU % | RSS MB | failed | KB/request |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
     summary = {}
     for rate in rates:
         agg = {}
         for mode in ("off", "on"):
             sel = [r for r in rows if r["rate"] == rate and r["mode"] == mode]
-            agg[mode] = {k: med(sel, k) for k in ("rps", "p50", "p95", "p99", "cpu", "rss_mb", "failed", "bytes_per_req")}
+            agg[mode] = {
+                k: med(sel, k) for k in ("rps", "p50", "p95", "p99", "cpu", "rss_mb", "failed", "bytes_per_req")
+            }
             g = agg[mode]
             kb = f"{g['bytes_per_req'] / 1024:.2f}" if g["bytes_per_req"] else "-"
-            lines.append(f"| {rate} | {mode} | {g['rps']:.1f} | {g['p50']:.2f} | {g['p95']:.2f} | {g['p99']:.2f} | "
-                         f"{g['cpu']:.1f} | {g['rss_mb']:.0f} | {g['failed']:.3f} | {kb} |")
+            lines.append(
+                f"| {rate} | {mode} | {g['rps']:.1f} | {g['p50']:.2f} | {g['p95']:.2f} | {g['p99']:.2f} | "
+                f"{g['cpu']:.1f} | {g['rss_mb']:.0f} | {g['failed']:.3f} | {kb} |"
+            )
         on, off = agg["on"], agg["off"]
-        lines.append(f"| {rate} | **overhead** | {pct(on['rps'], off['rps'])} | {pct(on['p50'], off['p50'])} | "
-                     f"{pct(on['p95'], off['p95'])} | {pct(on['p99'], off['p99'])} | {pct(on['cpu'], off['cpu'])} | "
-                     f"{pct(on['rss_mb'], off['rss_mb'])} | | |")
+        lines.append(
+            f"| {rate} | **overhead** | {pct(on['rps'], off['rps'])} | {pct(on['p50'], off['p50'])} | "
+            f"{pct(on['p95'], off['p95'])} | {pct(on['p99'], off['p99'])} | {pct(on['cpu'], off['cpu'])} | "
+            f"{pct(on['rss_mb'], off['rss_mb'])} | | |"
+        )
         summary[rate] = agg
     table = "\n".join(lines)
     print("\n" + table)

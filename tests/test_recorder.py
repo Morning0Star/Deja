@@ -38,10 +38,10 @@ def steps(rec):
 def test_paths_follow_the_creation_tree():
     _, rec = run(tree)
     assert task_news(rec) == [
-        ("r0", None),          # run_until_complete's task
-        ("r0.0", "r0"),        # mid
-        ("r0.1", "r0"),        # leaf
-        ("r0.0.0", "r0.0"),    # mid's leaves
+        ("r0", None),  # run_until_complete's task
+        ("r0.0", "r0"),  # mid
+        ("r0.1", "r0"),  # leaf
+        ("r0.0.0", "r0.0"),  # mid's leaves
         ("r0.0.1", "r0.0"),
     ]
 

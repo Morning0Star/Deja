@@ -15,9 +15,15 @@ _undo = []
 
 
 def _encode(resp):
-    return {"__t": "requests", "status": resp.status_code, "reason": resp.reason,
-            "headers": [[k, v] for k, v in resp.headers.items()], "url": resp.url, "encoding": resp.encoding,
-            "content": base64.b64encode(resp.content or b"").decode()}
+    return {
+        "__t": "requests",
+        "status": resp.status_code,
+        "reason": resp.reason,
+        "headers": [[k, v] for k, v in resp.headers.items()],
+        "url": resp.url,
+        "encoding": resp.encoding,
+        "content": base64.b64encode(resp.content or b"").decode(),
+    }
 
 
 def _decode(v):
@@ -36,8 +42,13 @@ def install():
             body = request.body
             if isinstance(body, (bytes, bytearray)):
                 body = bytes(body[:2000]).decode("utf-8", "replace")
-            return io_call_sync("http.send", (request.method, request.url, body),
-                                lambda: original(self, request, **kwargs), encode=_encode, decode=_decode)
+            return io_call_sync(
+                "http.send",
+                (request.method, request.url, body),
+                lambda: original(self, request, **kwargs),
+                encode=_encode,
+                decode=_decode,
+            )
 
         send.__wrapped__ = original
         return send

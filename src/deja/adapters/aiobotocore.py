@@ -24,7 +24,7 @@ class Body:
     async def read(self, amt=None):
         if amt is None or amt < 0:
             amt = len(self._data) - self._pos
-        out = self._data[self._pos:self._pos + amt]
+        out = self._data[self._pos : self._pos + amt]
         self._pos += len(out)
         return out
 
@@ -33,7 +33,7 @@ class Body:
             yield await self.read(chunk_size)
 
     async def iter_lines(self, chunk_size=1024, keepends=False):
-        rest = self._data[self._pos:]
+        rest = self._data[self._pos :]
         self._pos = len(self._data)
         for line in rest.splitlines(keepends):
             yield line

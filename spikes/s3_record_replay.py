@@ -18,16 +18,17 @@ import sys
 def io_jitter():
     """Simulated I/O on a worker thread; duration comes from the OS, not a recorded RNG."""
     import os, time
+
     time.sleep(int.from_bytes(os.urandom(2), "big") / 65535 * 0.003)
 
 
 async def handler(name, db, charges, rng):
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, io_jitter)      # request arrives
-    balance = db["balance"]                          # read
-    await loop.run_in_executor(None, io_jitter)      # "database round trip"
-    if balance >= 100:                               # check
-        db["balance"] = balance - 100                # act
+    await loop.run_in_executor(None, io_jitter)  # request arrives
+    balance = db["balance"]  # read
+    await loop.run_in_executor(None, io_jitter)  # "database round trip"
+    if balance >= 100:  # check
+        db["balance"] = balance - 100  # act
         charges.append(name)
 
 
@@ -149,7 +150,9 @@ class ReplayLoop(asyncio.SelectorEventLoop):
             self._process_events(self._selector.select(0.01))
             self.polls += 1
             if self.polls > 2000:
-                raise Divergence(f"step {self.pos}: expected task {want}, ready {[self.tids.of(h) for h in self._ready]}")
+                raise Divergence(
+                    f"step {self.pos}: expected task {want}, ready {[self.tids.of(h) for h in self._ready]}"
+                )
 
 
 # ------------------------------------------------------------------ experiment

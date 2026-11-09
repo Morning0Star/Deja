@@ -22,8 +22,9 @@ RID_HEADER = "X-Deja-Replay-Request"  # set by the replay harness: which recorde
 MAX_BODY = 1 << 20
 
 
-def deja_middleware(directory: str = "deja-recordings", on_dump=None, track: bool = True, track_skip=(),
-                    track_only=None):
+def deja_middleware(
+    directory: str = "deja-recordings", on_dump=None, track: bool = True, track_skip=(), track_only=None
+):
     rules = {"skip": list(track_skip or ()), "only": list(track_only) if track_only is not None else None}
     scanned = []
 
@@ -45,8 +46,12 @@ def deja_middleware(directory: str = "deja-recordings", on_dump=None, track: boo
             from .replay import _replay_rid
 
             _replay_rid.set(int(replay_rid))
-        rid = rec.request_start(request.method, request.path_qs, headers,
-                                body if len(body) <= MAX_BODY else body[:MAX_BODY] + b"...<truncated>")
+        rid = rec.request_start(
+            request.method,
+            request.path_qs,
+            headers,
+            body if len(body) <= MAX_BODY else body[:MAX_BODY] + b"...<truncated>",
+        )
         state = _State(rid)
         token = current_request.set(state)
         status, out, reason = 500, b"", None
@@ -103,8 +108,9 @@ class AiohttpHarness:
         hdrs = [(k, v) for k, v in headers if k.lower() not in ("host", "content-length", "transfer-encoding")]
         hdrs.append((RID_HEADER, str(rid)))
         try:
-            async with self._session.request(method, f"http://127.0.0.1:{self._port}{target}", headers=hdrs,
-                                             data=body or None) as resp:
+            async with self._session.request(
+                method, f"http://127.0.0.1:{self._port}{target}", headers=hdrs, data=body or None
+            ) as resp:
                 self.results[rid] = (resp.status, await resp.read())
         except Exception as exc:
             self.results[rid] = (500, f"{type(exc).__name__}: {exc}".encode())
