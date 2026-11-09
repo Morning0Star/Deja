@@ -46,6 +46,8 @@ First public release candidate.
 
 ### Project
 - Licensed under the Apache License 2.0 (`LICENSE`, `NOTICE`).
+- Releases are published by `.github/workflows/publish.yml` through PyPI trusted publishing (TestPyPI first);
+  the version is set in one place, `src/deja/__init__.py`.
 - `py.typed`: type checkers use Déjà's annotations. mypy checks the package in CI.
 - Coverage is measured and enforced: the Linux 3.14 CI job fails below 80% (about 82% of statements and
   branches today).

@@ -11,7 +11,7 @@ Recording (M1):
     deja.track(store, "wallet")           # show reads/writes of in-memory state in the report
 """
 
-__version__ = "0.0.2"
+__version__ = "0.1.0"  # the one place the version is set; pyproject.toml reads it
 
 from .annotate import calls, labels, touch  # noqa: E402
 from .asgi import DejaMiddleware, flag  # noqa: E402

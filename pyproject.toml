@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deja-replay"
-version = "0.0.2"
+dynamic = ["version"]  # from src/deja/__init__.py
 description = "Record the real scheduling order of an asyncio app and replay its race conditions deterministically."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -49,6 +49,9 @@ sql = []  # kept so `pip install deja-replay[sql]` still works; sqlglot is a dep
 
 [project.scripts]
 deja = "deja.cli:main"
+
+[tool.hatch.version]
+path = "src/deja/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/deja"]
