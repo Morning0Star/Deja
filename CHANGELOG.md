@@ -45,6 +45,7 @@ First public release candidate.
 - Type annotations and Google-style docstrings on the public API.
 
 ### Project
+- Licensed under the Apache License 2.0 (`LICENSE`, `NOTICE`).
 - `py.typed`: type checkers use Déjà's annotations. mypy checks the package in CI.
 - Coverage is measured and enforced: the Linux 3.14 CI job fails below 80% (about 82% of statements and
   branches today).

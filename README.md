@@ -183,4 +183,5 @@ setup and tests, and [CHANGELOG.md](CHANGELOG.md) for what changed.
 
 ## License
 
-To be decided before the first release.
+[Apache License 2.0](LICENSE). Copyright 2026 Kushagra Sagar; see [NOTICE](NOTICE). Contributions are accepted under
+the same licence (section 5 of the licence), which includes a patent grant from each contributor.

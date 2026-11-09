@@ -4,7 +4,7 @@ site_url: https://morning0star.github.io/Deja/
 repo_url: https://github.com/Morning0Star/Deja
 repo_name: Morning0Star/Deja
 edit_uri: edit/main/docs/
-copyright: Copyright &copy; 2026 Kushagra Sagar
+copyright: Copyright &copy; 2026 Kushagra Sagar · <a href="https://github.com/Morning0Star/Deja/blob/main/LICENSE">Apache License 2.0</a>
 
 strict: true
 

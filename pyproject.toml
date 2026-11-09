@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatchling>=1.27"]  # 1.27: SPDX license and license-files (PEP 639)
 build-backend = "hatchling.build"
 
 [project]
@@ -9,6 +9,8 @@ description = "Record the real scheduling order of an asyncio app and replay its
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "Kushagra Sagar" }]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 dependencies = ["sqlglot>=25"]  # SQL parsing for the report: which rows each statement read and wrote
 keywords = ["asyncio", "race condition", "record replay", "deterministic replay", "debugging", "fastapi", "asgi"]
 classifiers = [
@@ -53,7 +55,7 @@ packages = ["src/deja"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src", "tests", "gallery", "docs", "mkdocs.yml", "compose.yaml", "README.md", "CHANGELOG.md", "CONTRIBUTING.md",
-           "SECURITY.md", "LICENSE", "pyproject.toml"]
+           "SECURITY.md", "LICENSE", "NOTICE", "pyproject.toml"]
 
 [tool.ruff]
 line-length = 120

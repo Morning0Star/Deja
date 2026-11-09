@@ -3,6 +3,9 @@
 Thanks for helping. Bug reports with a recording are the most useful contribution: a `.deja` file (with anything
 private removed, see [SECURITY.md](https://github.com/Morning0Star/Deja/blob/main/SECURITY.md)) and the app code, or a minimal app that reproduces the problem.
 
+By contributing you agree that your contribution is licensed under the project's licence, the
+[Apache License 2.0](https://github.com/Morning0Star/Deja/blob/main/LICENSE) (its section 5), including its patent grant.
+
 ## Set up
 
 ```bash
