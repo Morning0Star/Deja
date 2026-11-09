@@ -6,7 +6,9 @@ the recording format or the Python API; recordings from older versions keep load
 
 ## [Unreleased]
 
-First public release candidate.
+## [0.1.0] - 2026-11-09
+
+First public release.
 
 ### Recording
 - Recording event loop for asyncio (CPython 3.12–3.15, PyPy 3.12): one integer per step, stable task identities,
@@ -62,3 +64,6 @@ First public release candidate.
 - The HTML report loads nothing from the network: no web fonts, and a content security policy that forbids it.
 - Quitting `deja step` at a pause no longer loses the paused step; a stopped replay ends its leftover tasks
   cleanly (no "coroutine was never awaited" or "Task was destroyed but it is pending" messages).
+
+[Unreleased]: https://github.com/Morning0Star/Deja/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Morning0Star/Deja/releases/tag/v0.1.0
