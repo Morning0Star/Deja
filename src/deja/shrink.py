@@ -9,6 +9,9 @@ changed state the race depends on (a write the racing requests read) therefore s
 kept request are dropped too.
 """
 
+from collections.abc import Callable
+from typing import Any
+
 from .analysis import analyze
 from .fileformat import read, write
 from .replay import Schedule, replay
@@ -42,8 +45,26 @@ def _ok(header, events, factory, keep, recorded, deadline_s):
     )
 
 
-def shrink(recording: str, app_factory, out: str, deadline_s: float = 10.0) -> dict:
-    """Write the smallest recording found to ``out``; returns ``{"kept", "removed", "events"}``."""
+def shrink(recording: str, app_factory: Callable[[], Any], out: str, deadline_s: float = 10.0) -> dict:
+    """Cut a recording down to the requests its race needs.
+
+    The two requests of the first conflict are kept. Déjà tries removing all the others at once, then (if the race
+    no longer replays) one at a time, keeping a removal only if the smaller recording still replays and the kept
+    requests still answer as recorded.
+
+    Args:
+        recording: Path of the ``.deja`` file with the race.
+        app_factory: Builds the app, as for [`replay`][deja.replay.replay].
+        out: Path of the smaller ``.deja`` file to write.
+        deadline_s: Seconds without progress before a replay gives up.
+
+    Returns:
+        ``{"kept": [...], "removed": [...], "events": (before, after)}``: request ids (``"q3"``) kept and removed,
+        and the event counts of the two recordings.
+
+    Raises:
+        ValueError: If the recording has no race to shrink to.
+    """
     header, events = read(recording)
     a = analyze(header, events)
     if not a["conflicts"]:

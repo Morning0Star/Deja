@@ -12,6 +12,7 @@ no database or network needed.
 > Status: working end to end for ASGI apps (FastAPI, Starlette, Litestar, Quart, Django), aiohttp servers and queue
 > workers, on CPython 3.12 to 3.15 and PyPy 3.12, tested on Linux, Windows and macOS. Not production-hardened yet;
 > see [what's not covered](#not-covered-yet).
+> **Documentation: [morning0star.github.io/Deja](https://morning0star.github.io/Deja/)** (source in [docs/](docs/)) ·
 > Design and prior art: [docs/DESIGN.md](docs/DESIGN.md) · Architecture and decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
 > Feasibility spikes: [spikes/RESULTS.md](spikes/RESULTS.md) · Benchmarks: [benchmarks/RESULTS.md](benchmarks/RESULTS.md) ·
 > Race gallery: [gallery/README.md](gallery/README.md)
@@ -48,7 +49,7 @@ In your own app:
 ```python
 import deja
 app.add_middleware(deja.DejaMiddleware, directory="deja-recordings")   # saves on 5xx, exception, or deja.flag()
-# uvicorn app:app --loop deja.loop:recording_loop
+# uvicorn app:app --loop deja.loop:recording_loop        (uvicorn 0.36 or newer)
 ```
 
 Other kinds of app:
@@ -156,9 +157,14 @@ What Déjà can't decide, it says so ("possible conflict") rather than guess. Th
 - **Exploring orderings** (`deja explore`) uses the recorded database answers, so orderings in which the app would
   have read different rows are approximate (marked).
 - **Several workers** are merged by time on one machine (shared clock); across machines they aren't.
+- **Mixed recordings**: one that holds both HTTP requests and `deja.scope` jobs is analysed but not replayed.
+- **Other randomness**: `random.shuffle`, `random.sample`, `secrets` and the app's own `random.Random` aren't
+  recorded and can make a replay diverge (the `random` module's functions, UUIDs, `os.urandom` and clocks are).
 - uvloop (record on the standard loop), free-threaded builds, Trio.
 - Overhead: about 6–17% CPU per request in this repository's benchmark on a laptop (the noise is large), about 12%
   on CI earlier; the 5% target needs the per-step log moved to C.
+
+The full list, with what to do about each: [Limits](https://morning0star.github.io/Deja/limits/).
 
 ## Requirements
 

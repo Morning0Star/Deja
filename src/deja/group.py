@@ -17,6 +17,7 @@ import glob
 import json
 import os
 import time
+from collections.abc import Iterable
 
 from . import events as ev
 from .fileformat import read, write
@@ -130,8 +131,20 @@ def _renamed(e, k):
     return tuple(e)
 
 
-def merge(paths, out: str) -> str:
-    """Merge the per-worker files of one group request into one recording ``out``."""
+def merge(paths: Iterable[str], out: str) -> str:
+    """Merge the recordings that several workers saved for one race into one recording.
+
+    Each worker's events are interleaved by the time they happened (all processes on one machine share a clock),
+    and each worker's request and task ids are renamed so they don't clash: worker ``k``'s request ``r`` becomes
+    ``r + k * 100000``.
+
+    Args:
+        paths: The ``.deja`` files in one ``<group>/<id>/`` folder, one per worker.
+        out: Path of the merged ``.deja`` file to write.
+
+    Returns:
+        ``out``.
+    """
     parts = []
     for k, path in enumerate(sorted(paths)):
         header, events = read(path)

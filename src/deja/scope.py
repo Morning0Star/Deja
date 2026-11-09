@@ -16,6 +16,8 @@ The replay calls each handler with the recorded payload, in the recorded interle
 import asyncio
 import contextlib
 import json
+from collections.abc import AsyncIterator, Callable
+from typing import Any
 
 from . import codec
 from .asgi import _State, current_request, save
@@ -24,6 +26,8 @@ KIND = "JOB"  # the "method" of a scope in the recording
 
 
 class Job:
+    """One [`deja.scope`][deja.scope.scope] block: its ``name``, its ``payload``, and the ``result`` the block sets."""
+
     __slots__ = ("name", "payload", "rid", "result")
 
     def __init__(self, name, payload, rid):
@@ -42,8 +46,42 @@ def payload_of(body: bytes):
 
 
 @contextlib.asynccontextmanager
-async def scope(name: str, payload=None, directory: str = "deja-recordings", on_dump=None):
-    """Treat the block as one request named ``name`` with input ``payload`` (see module docs)."""
+async def scope(
+    name: str,
+    payload: Any = None,
+    directory: str = "deja-recordings",
+    on_dump: Callable[[str, str], object] | None = None,
+) -> AsyncIterator["Job"]:
+    """Record a block of work that isn't a web request as one request.
+
+    Use it in queue consumers, scheduled jobs and message handlers. The block is recorded like a request: its
+    payload, its result and the order of its steps against everything else being recorded. A recording is saved
+    when an exception leaves the block or code inside it calls [`deja.flag`][deja.flag]; the exception is re-raised.
+    Outside a recording loop the block just runs.
+
+    To replay, pass ``--app`` a mapping (or a factory returning one) from scope name to an ``async`` handler. Each
+    recorded job is replayed as ``await handler(payload)`` and its return value compared with ``job.result``.
+
+    Args:
+        name: The kind of job (``"orders"``). Replay looks up the handler by this name.
+        payload: The job's input. It is stored in the recording and passed to the handler in replay, so it must
+            be JSON-serialisable (``bytes``, tuples and sets are fine).
+        directory: Folder for the ``.deja`` files.
+        on_dump: Called as ``on_dump(path, reason)`` after a recording is written.
+
+    Yields:
+        The job, with ``name``, ``payload`` and ``result``. Set ``job.result`` to what the job produced, so replay
+            can compare it.
+
+    Example:
+        ```python
+        async for msg in consumer:
+            async with deja.scope("orders", msg.value) as job:
+                job.result = await handle_order(msg.value)
+
+        handlers = {"orders": handle_order}   # deja replay rec.deja --app myworker:handlers
+        ```
+    """
     rec = getattr(asyncio.get_running_loop(), "deja", None)
     if rec is None:
         yield Job(name, payload, None)

@@ -11,6 +11,7 @@ and the replay verdict. Works offline; the data is embedded in the page.
 import html
 import json
 import os
+from typing import Any
 
 from .analysis import analyze
 from .fileformat import read
@@ -419,7 +420,21 @@ def build(header: dict, events: list, replay=None, source: str = "") -> str:
     return PAGE.replace("__DATA__", payload).replace("__SOURCE__", html.escape(source))
 
 
-def write_report(recording: str, out: str | None = None, replay=None) -> str:
+def write_report(recording: str, out: str | None = None, replay: Any = None) -> str:
+    """Write the HTML report of a recording: the race in plain words, the requests and a timeline.
+
+    The page is one file with the recording's analysis embedded; it works offline (it loads two web fonts when
+    online and falls back to system fonts). It holds what the recording holds, so share it as carefully (see
+    Security in the docs).
+
+    Args:
+        recording: Path of the ``.deja`` file.
+        out: Path of the ``.html`` file. Defaults to the recording's path with ``.html``.
+        replay: A [`ReplayResult`][deja.replay.ReplayResult] to show the replay verdict, or ``None``.
+
+    Returns:
+        The path written.
+    """
     header, events = read(recording)
     out = out or os.path.splitext(recording)[0] + ".html"
     with open(out, "w", encoding="utf-8") as f:

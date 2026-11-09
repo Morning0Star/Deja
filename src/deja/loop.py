@@ -230,9 +230,27 @@ if sys.platform == "win32":
 
 
 def recording_loop(recorder: Recorder | None = None) -> asyncio.AbstractEventLoop:
-    """Loop factory for ``asyncio.run(main(), loop_factory=deja.recording_loop)``.
+    """Create an event loop that records the order in which tasks run.
 
-    Uses the platform's default loop type. On unverified Python versions, warns and returns a plain loop.
+    It is the platform's default loop type (selector loop on Linux and macOS, proactor loop on Windows) with
+    recording added. Recording starts when a request enters request scope ([`deja.DejaMiddleware`][deja.DejaMiddleware],
+    [`deja.scope`][deja.scope.scope]); other code runs as usual.
+
+    On a Python version Déjà hasn't been verified against, it warns and returns a plain loop, so the app runs
+    unrecorded rather than recorded wrongly.
+
+    Args:
+        recorder: The [`deja.Recorder`][deja.Recorder] to use, for a bigger buffer or other redacted headers. Defaults to a
+            new one with default settings.
+
+    Returns:
+        The new event loop. ``loop.deja`` is its recorder.
+
+    Example:
+        ```python
+        asyncio.run(main(), loop_factory=deja.recording_loop)
+        # uvicorn app:app --loop deja.loop:recording_loop
+        ```
     """
     if not _compat.supported():
         _compat.warn_unsupported()

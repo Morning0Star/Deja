@@ -24,6 +24,8 @@ import logging
 import os
 import time
 import warnings
+from collections.abc import Callable, Iterable
+from typing import Any
 
 log = logging.getLogger("deja")
 
@@ -58,7 +60,22 @@ class _State:
 
 
 def flag(reason: str = "") -> None:
-    """Mark the current request (or task) as bad so its causal window gets saved."""
+    """Save a recording of the current request, although it didn't fail.
+
+    Call it where the app notices something wrong that isn't an error: a negative balance, a seat sold twice. The
+    recording is written when the request ends; on a WebSocket connection, as soon as the app waits for the next
+    message. Inside a [`deja.scope`][deja.scope.scope] block it saves that job. Outside a recording loop it does nothing.
+
+    Args:
+        reason: A few words on what went wrong. The recording's header stores it as ``"flag: <reason>"`` and the
+            report shows it.
+
+    Example:
+        ```python
+        if account.balance < 0:
+            deja.flag("balance went negative")
+        ```
+    """
     loop = asyncio._get_running_loop()
     rec = getattr(loop, "deja", None) if loop is not None else None
     if rec is None:
@@ -70,14 +87,49 @@ def flag(reason: str = "") -> None:
 
 
 class DejaMiddleware:
+    """ASGI middleware that records every request and saves a recording when one goes wrong.
+
+    Works with any ASGI app: FastAPI, Starlette, Litestar, Quart, Django (ASGI). Serve the app on the recording
+    loop (``uvicorn app:app --loop deja.loop:recording_loop``); on any other loop the middleware passes requests
+    through and warns once.
+
+    Each HTTP request is recorded with its method, path, headers (sensitive ones redacted, see
+    [`deja.Recorder`][deja.Recorder]) and body, and each WebSocket connection with every message in and out. A recording of
+    the request's causal window (it, and the requests that overlapped it) is written when the response is a 5xx,
+    an exception escapes the app, a WebSocket connection closes with code 1011, or app code calls
+    [`deja.flag`][deja.flag].
+
+    Args:
+        app: The ASGI app to wrap. ``app.add_middleware(DejaMiddleware, ...)`` passes it for you.
+        directory: Folder for the ``.deja`` files, created when the first one is written.
+        on_dump: Called as ``on_dump(path, reason)`` after each recording is written; use it to log or alert.
+        track: Find the shared in-memory state the routes' code can reach and track it, so the report sees races
+            on it and replay can order worker threads (see the Shared state guide).
+        track_skip: ``fnmatch`` patterns of state not to track, matched against its name (``store.cache``) or
+            its class (``myapp.models.Account``).
+        track_only: If given, track only state matching these patterns.
+        background: Record the background tasks the app starts during startup (lifespan) and order them like
+            requests.
+        group: A folder shared by several worker processes of the same app, so a race across workers ends up in
+            one recording (see the Several workers guide). Defaults to the ``DEJA_GROUP``
+            environment variable.
+        worker: This process's name within ``group``. Defaults to ``pid<process id>``.
+
+    Example:
+        ```python
+        app = FastAPI()
+        app.add_middleware(deja.DejaMiddleware, directory="deja-recordings")
+        ```
+    """
+
     def __init__(
         self,
-        app,
+        app: Callable[..., Any],
         directory: str = "deja-recordings",
-        on_dump=None,
+        on_dump: Callable[[str, str], object] | None = None,
         track: bool = True,
-        track_skip=(),
-        track_only=None,
+        track_skip: Iterable[str] = (),
+        track_only: Iterable[str] | None = None,
         background: bool = True,
         group: str | None = None,
         worker: str | None = None,

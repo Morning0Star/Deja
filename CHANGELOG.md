@@ -18,6 +18,9 @@ First public release candidate.
   boto3, aiokafka, httpx (async, sync, streams), aiohttp client, requests, grpc.aio; worker threads
   (`anyio.to_thread`, `asyncio.to_thread`, `run_in_executor`); clocks, random numbers, UUIDs and dates.
 - Several worker processes record one race together (`group=`, `deja merge`).
+- A saved window keeps every request that overlapped the failing one, including those that finished before it
+  (earlier builds dropped a racing request that ended first). A worker's slice of a group recording likewise runs
+  to the end of the requests still in flight when the window closed.
 
 ### Analysis and report
 - Lost updates, check-then-act races (including over ranges and guarded inserts), stale reads, write skew, torn
@@ -32,3 +35,11 @@ First public release candidate.
   threads are ordered at their accesses to shared state.
 - `deja verify`, `diff`, `export-test`, `shrink`, `explore` (other orderings) and `step` (pause and inspect).
 - Source fingerprints, hash-seed replay, tracking allow / deny lists, versioned recording format.
+- The CLI documents every option, shows defaults, and exits with 0 (success), 1 (check failed) or 2 (couldn't run,
+  for example an unreadable recording) without a traceback.
+
+### Documentation
+- A documentation site (MkDocs Material): getting started, how it works, guides for each kind of app and feature,
+  CLI and Python API reference, supported libraries, configuration, recording format, limits and troubleshooting.
+  Its examples run in the test suite, and tests check that it covers every command, option and public name.
+- Type annotations and Google-style docstrings on the public API.

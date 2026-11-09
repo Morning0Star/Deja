@@ -1,7 +1,7 @@
 # Contributing to Déjà
 
 Thanks for helping. Bug reports with a recording are the most useful contribution: a `.deja` file (with anything
-private removed, see [SECURITY.md](SECURITY.md)) and the app code, or a minimal app that reproduces the problem.
+private removed, see [SECURITY.md](https://github.com/Morning0Star/Deja/blob/main/SECURITY.md)) and the app code, or a minimal app that reproduces the problem.
 
 ## Set up
 
@@ -26,7 +26,7 @@ docker run -d --name deja-mysql -p 127.0.0.1:53306:3306 -e MYSQL_ROOT_PASSWORD=d
 ## Before a pull request
 
 ```bash
-ruff check src tests && ruff format src tests gallery   # lint and format (configured in pyproject.toml)
+ruff check src tests docs/examples && ruff format src tests gallery docs/examples   # lint and format
 python -m pytest -q           # the suite; please run it on the oldest and newest supported Python if you can
 python -m gallery.acceptance --recordings 2 --replays 20   # the race gallery still records and replays
 ```
@@ -37,7 +37,21 @@ python -m gallery.acceptance --recordings 2 --replays 20   # the race gallery st
   with it stopped.
 - Write docstrings and messages in plain words: the report is read by people chasing a bug at 2 a.m.
 
+## Documentation
+
+The site is built with MkDocs Material from `docs/` (`mkdocs.yml` lists the pages; the API reference comes from the
+docstrings, Google style). To preview it and check it the way the tests do:
+
+```bash
+pip install -e ".[docs]"
+mkdocs serve                  # http://127.0.0.1:8000, reloads on change
+mkdocs build --strict         # fails on a broken link, anchor or reference
+```
+
+`tests/test_docs.py` runs the examples in `docs/examples/` and checks that every command, option and public name is
+documented, so a change to the CLI or the API needs its docs in the same pull request.
+
 ## Design
 
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) explains the recording and replay model and lists the design decisions
+[docs/ARCHITECTURE.md](https://github.com/Morning0Star/Deja/blob/main/docs/ARCHITECTURE.md) explains the recording and replay model and lists the design decisions
 (D1–D33) with their reasons. Please read the relevant ones before changing those areas.

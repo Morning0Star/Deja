@@ -5,7 +5,7 @@
 A `.deja` recording is a copy of what the app saw and did in the recorded window: request bodies, SQL statements and
 their parameters, rows returned by the database, outside HTTP and API responses, WebSocket messages, and values read
 from in-memory state. Only the `Authorization`, `Cookie` and `X-Api-Key` request headers are redacted
-(`Recorder(redact_headers=...)` adds more). Treat recordings like production database dumps:
+(`Recorder(redact_headers=...)` changes the list). Treat recordings like production database dumps:
 
 - keep them where production data is allowed, and delete them when the bug is fixed;
 - remove anything private before attaching one to a public issue;

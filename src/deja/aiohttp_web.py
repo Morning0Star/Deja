@@ -6,13 +6,14 @@
 
 The middleware records each request (method, path, headers, body) and the response, marks the handler's task as
 request scope, and saves the causal window on a 5xx, an exception or ``deja.flag()``, like
-:class:`deja.DejaMiddleware`. ``deja replay`` / :func:`deja.replay.replay` accept an aiohttp ``Application`` (or a
+[`deja.DejaMiddleware`][deja.DejaMiddleware]. ``deja replay`` / [`replay`][deja.replay.replay] accept an aiohttp ``Application`` (or a
 factory returning one): the harness serves it on a local port and re-sends the recorded requests; a header tells
 the recorder which recorded request each one is.
 """
 
 import asyncio
 import contextvars
+from collections.abc import Callable, Iterable
 
 from aiohttp import web
 
@@ -23,8 +24,38 @@ MAX_BODY = 1 << 20
 
 
 def deja_middleware(
-    directory: str = "deja-recordings", on_dump=None, track: bool = True, track_skip=(), track_only=None
-):
+    directory: str = "deja-recordings",
+    on_dump: Callable[[str, str], object] | None = None,
+    track: bool = True,
+    track_skip: Iterable[str] = (),
+    track_only: Iterable[str] | None = None,
+) -> Callable:
+    """Middleware for aiohttp web servers, which aren't ASGI.
+
+    The aiohttp counterpart of [`deja.DejaMiddleware`][deja.DejaMiddleware].
+
+    It records each request (method, path, headers, body) and its response, and saves a recording on a 5xx, an
+    exception or [`deja.flag`][deja.flag]. Run the app on the recording loop.
+
+    Args:
+        directory: Folder for the ``.deja`` files.
+        on_dump: Called as ``on_dump(path, reason)`` after each recording is written.
+        track: Track the shared in-memory state the handlers can reach (see the Shared state
+            guide).
+        track_skip: ``fnmatch`` patterns of state not to track.
+        track_only: If given, track only state matching these patterns.
+
+    Returns:
+        An aiohttp middleware to put in ``web.Application(middlewares=[...])``.
+
+    Example:
+        ```python
+        from deja.aiohttp_web import deja_middleware
+
+        app = web.Application(middlewares=[deja_middleware(directory="deja-recordings")])
+        web.run_app(app, loop=deja.recording_loop())
+        ```
+    """
     rules = {"skip": list(track_skip or ()), "only": list(track_only) if track_only is not None else None}
     scanned = []
 

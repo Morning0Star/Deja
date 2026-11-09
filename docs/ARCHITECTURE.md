@@ -1,6 +1,6 @@
 # Déjà architecture (v1 plan, 2026-11-07)
 
-Builds on [DESIGN.md](DESIGN.md) (problem, prior art) and the feasibility spikes in [../spikes/RESULTS.md](../spikes/RESULTS.md).
+Builds on [DESIGN.md](DESIGN.md) (problem, prior art) and the feasibility spikes in [../spikes/RESULTS.md](https://github.com/Morning0Star/Deja/blob/main/spikes/RESULTS.md).
 Every decision below cites the evidence it rests on.
 
 ## 1. Success criteria
@@ -196,7 +196,7 @@ Per loop pass (generalised from spike S3):
 
 ## 7. Status
 
-- **M0 done** (2026-11-07): gallery measured in memory and on Postgres; see [../gallery/README.md](../gallery/README.md).
+- **M0 done** (2026-11-07): gallery measured in memory and on Postgres; see [../gallery/README.md](https://github.com/Morning0Star/Deja/blob/main/gallery/README.md).
 - **M1 done** (2026-11-07): recording loops (Selector + Proactor), task registry with eager-task reservation, ring
   buffer, shims, ASGI middleware with 5xx / exception / `deja.flag()` triggers, `.deja` writer, gallery `--record`.
   23 tests pass on CPython 3.12 and 3.14. Worst-case overhead (`benchmarks/sched_overhead.py`) ~10–25% on a loaded

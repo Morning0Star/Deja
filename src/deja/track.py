@@ -4,7 +4,7 @@
     self.carts = deja.track({}, "carts")                         # carts[42] = c  -> write carts[42]
     deja.track(self, "wallet")                                   # self.balance -> read wallet.balance
 
-Most apps don't need these calls: :class:`deja.DejaMiddleware` tracks the state its routes can reach on its own
+Most apps don't need these calls: [`deja.DejaMiddleware`][deja.DejaMiddleware] tracks the state its routes can reach on its own
 (see :mod:`deja.autotrack`).
 
 * ``dict``, ``defaultdict``, ``OrderedDict``, ``Counter``, ``list``, ``set``, ``deque``: returns a tracked copy of
@@ -33,6 +33,7 @@ record and replay work without it.
 import collections
 import sys
 import threading
+from typing import Any
 
 from . import annotate
 from .threads import _thread
@@ -722,8 +723,35 @@ def track_object(obj, name):
     return obj
 
 
-def track(obj, name: str = None, key: str = None):
-    """Report reads and writes of ``obj`` to the recording. Returns the object to use (see module docs)."""
+def track(obj: Any, name: str | None = None, key: str | None = None) -> Any:
+    """Make reads and writes of ``obj`` visible to the report.
+
+    Most apps never call this: [`deja.DejaMiddleware`][deja.DejaMiddleware] tracks the state its routes can reach on its own.
+    Use it for state the middleware can't find (see the Shared state guide).
+
+    A ``dict``, ``defaultdict``, ``OrderedDict``, ``Counter``, ``list``, ``set`` or ``deque`` is copied into a
+    tracked container of the same type: **use the returned object** and drop the original. Any other object with a
+    ``__dict__`` is tracked in place (its class is swapped for a reporting subclass) and returned. Tracking an
+    already tracked object returns it unchanged.
+
+    Args:
+        obj: The container or object to track.
+        name: Its name in the report (``"carts"``, ``"wallet"``). Defaults to the type's name.
+        key: For a set or list of records, the field that identifies an item, so the report names items by it
+            (``key="username"`` reports ``users[username=ada]``).
+
+    Returns:
+        The object to use from now on: a tracked copy for containers, ``obj`` itself for other objects.
+
+    Raises:
+        TypeError: If ``obj`` is neither a supported container nor an object with a ``__dict__``.
+
+    Example:
+        ```python
+        self.carts = deja.track({}, "carts")      # carts[42] = c  -> write carts[42]
+        deja.track(self.wallet, "wallet")         # wallet.balance -> read wallet.balance
+        ```
+    """
     if isinstance(obj, TRACKED):
         return obj
     if type(obj) in COPIES:

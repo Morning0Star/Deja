@@ -375,6 +375,17 @@ def _fmt_writes(w):
 
 # ---------------------------------------------------------------------- main entry
 def analyze(header: dict, events: list) -> dict:
+    """Find the races in a recording and explain them.
+
+    Args:
+        header: The recording's header, from [`read`][deja.fileformat.read].
+        events: Its events.
+
+    Returns:
+        A dict. The main keys: ``"story"`` (the race in plain words), ``"conflicts"`` (each with ``pattern``,
+        ``resource``, the two requests ``a`` and ``b``, and ``confidence``: ``"certain"`` or ``"possible"``),
+        ``"moments"`` (the steps that matter, in order) and ``"requests"``.
+    """
     labels = dict(header.get("labels") or {})
     t_base = None
     now = None

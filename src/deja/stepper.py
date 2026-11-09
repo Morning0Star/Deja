@@ -21,6 +21,7 @@ before each recorded step with ``info.index``, ``info.path``, ``info.task``, ``i
 """
 
 import pprint
+from collections.abc import Callable
 
 
 class Stop(Exception):
@@ -51,6 +52,15 @@ def _app_frame(fs):
 
 
 class StepInfo:
+    """The step a replay is about to take, passed to ``on_step`` callbacks.
+
+    Attributes:
+        loop: The replay loop.
+        index: Number of the step in the recording, from 0. The same number is the same moment in every replay.
+        path: The task about to run (``"q1"`` is request 1's task, ``"q1.2"`` its third child).
+        task: The ``asyncio.Task`` about to run.
+    """
+
     def __init__(self, loop, index, path, task):
         self.loop, self.index, self.path, self.task = loop, index, path, task
 
@@ -84,9 +94,25 @@ def _recent(info, n=8):
 
 
 class Stepper:
-    """The interactive pause (``deja step``). ``ask`` / ``say`` are swappable for tests."""
+    """The interactive pause behind ``deja step``; pass one to [`replay`][deja.replay.replay] as ``on_step``.
 
-    def __init__(self, at=None, task=None, ask=input, say=print):
+    With neither ``at`` nor ``task`` it pauses before every step. At a pause it reads commands (``n``, ``c``,
+    ``s PATH``, ``w``, ``l``, ``p EXPR``, ``t``, ``pdb``, ``q``; see ``deja step`` in the CLI reference).
+
+    Args:
+        at: Run without pausing until step ``at``, then pause.
+        task: Run without pausing until task ``task`` (``"q1"``) is about to run, then pause.
+        ask: Reads a command; called with the prompt. Replace it to script a session.
+        say: Prints output; called with one string.
+    """
+
+    def __init__(
+        self,
+        at: int | None = None,
+        task: str | None = None,
+        ask: Callable[[str], str] = input,
+        say: Callable[[str], object] = print,
+    ):
         self.at, self.task, self.ask, self.say = at, task, ask, say
         self.mode = "step" if at is None and task is None else "run"
 

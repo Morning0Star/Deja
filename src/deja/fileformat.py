@@ -39,6 +39,13 @@ def _decode(v):
 
 
 def write(path: str, header: dict, events: list) -> None:
+    """Write a recording: gzipped JSON Lines, the header first and then one event per line.
+
+    Args:
+        path: The ``.deja`` file to write.
+        header: The header object; it must carry ``"format": "deja/1"``.
+        events: The events, as tuples.
+    """
     with gzip.open(path, "wt", encoding="utf-8") as f:
         f.write(json.dumps(header, default=_default) + "\n")
         for e in events:
@@ -56,9 +63,25 @@ def version(header: dict) -> int:
 
 
 def read(path: str) -> tuple[dict, list]:
-    with gzip.open(path, "rt", encoding="utf-8") as f:
-        header = json.loads(f.readline())
-        events = [tuple(_decode(json.loads(line))) for line in f]
+    """Read a recording, upgrading an older format to the current one.
+
+    Args:
+        path: The ``.deja`` file.
+
+    Returns:
+        ``(header, events)``, with each event as a tuple and ``bytes`` restored.
+
+    Raises:
+        FormatError: If the file isn't a Déjà recording, or was written by a newer Déjà.
+    """
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            header = json.loads(f.readline())
+            events = [tuple(_decode(json.loads(line))) for line in f]
+    except (gzip.BadGzipFile, EOFError, UnicodeDecodeError, ValueError) as exc:  # json errors are ValueErrors
+        raise FormatError(f"{path} is not a readable Déjà recording ({exc})") from None
+    if not isinstance(header, dict):
+        raise FormatError(f"{path} is not a Déjà recording (no header)")
     n = version(header)
     if n > FORMAT:
         raise FormatError(

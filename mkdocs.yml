@@ -1,0 +1,127 @@
+site_name: Déjà
+site_description: Record the real scheduling order of an asyncio app, explain its races, and replay them deterministically.
+site_url: https://morning0star.github.io/Deja/
+repo_url: https://github.com/Morning0Star/Deja
+repo_name: Morning0Star/Deja
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2026 Kushagra Sagar
+
+strict: true
+
+theme:
+  name: material
+  language: en
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue grey
+      accent: deep orange
+      toggle:
+        icon: material/weather-night
+        name: Dark theme
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue grey
+      accent: deep orange
+      toggle:
+        icon: material/weather-sunny
+        name: Light theme
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+  icon:
+    repo: fontawesome/brands/github
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - How it works: how-it-works.md
+  - Guides:
+      - ASGI apps: guides/asgi.md
+      - aiohttp servers: guides/aiohttp.md
+      - Queue consumers and jobs: guides/jobs.md
+      - Background tasks: guides/background-tasks.md
+      - WebSockets: guides/websockets.md
+      - Worker threads: guides/threads.md
+      - Several workers: guides/workers.md
+      - Shared state: guides/shared-state.md
+      - Reading a report: guides/reading-reports.md
+      - Fixing a race: guides/fixing-races.md
+      - Using Déjà in tests: guides/testing.md
+  - Reference:
+      - Command line: reference/cli.md
+      - Python API: reference/python-api.md
+      - Supported libraries: reference/adapters.md
+      - Configuration: reference/configuration.md
+      - Recording format: reference/recording-format.md
+  - Limits: limits.md
+  - Troubleshooting: troubleshooting.md
+  - Project:
+      - Security: security.md
+      - Changelog: changelog.md
+      - Contributing: contributing.md
+      - Design: DESIGN.md
+      - Architecture: ARCHITECTURE.md
+      - Report design: VISUALIZATION.md
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            docstring_section_style: table
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            show_signature_annotations: true
+            separate_signature: true
+            signature_crossrefs: true
+            merge_init_into_class: true
+            members_order: source
+            show_if_no_docstring: false
+            filters: ["!^_"]
+            heading_level: 3
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Morning0Star/Deja

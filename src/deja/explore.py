@@ -16,6 +16,8 @@ runs are marked approximate.
 
 import itertools
 import random
+from collections.abc import Callable
+from typing import Any
 
 from .replay import ASGIHarness, ReplayLoop, Schedule, _replay_rid  # noqa: F401
 from .scope import JobHarness
@@ -146,8 +148,34 @@ def _key(run):
     return tuple(sorted((rid, tuple(v) if isinstance(v, (list, tuple)) else v) for rid, v in run["responses"].items()))
 
 
-def explore(recording, app_factory, tries: int = 50, seed: int = 1, deadline_s: float = 10.0) -> dict:
-    """Serial orders and ``tries`` random interleavings; returns the outcomes no serial order produces."""
+def explore(
+    recording: "str | Schedule",
+    app_factory: Callable[[], Any],
+    tries: int = 50,
+    seed: int = 1,
+    deadline_s: float = 10.0,
+) -> dict:
+    """Replay a recording's requests in orderings that didn't happen, to find races that haven't happened yet.
+
+    First every serial order (each request alone, start to finish; for more than five requests, first-to-last
+    and last-to-first), then ``tries`` seeded random interleavings. An interleaving whose answers no serial order
+    gives is a race.
+
+    Database and HTTP answers still come from the recording, so an ordering in which the app would have read
+    different rows isn't modelled; runs that made calls the recording has no answer for are marked approximate.
+
+    Args:
+        recording: Path of a ``.deja`` file (or a loaded ``Schedule``).
+        app_factory: Builds the app, as for [`replay`][deja.replay.replay].
+        tries: Random interleavings to run.
+        seed: Seed of the first one; run ``i`` uses ``seed + i``, so a race found can be run again.
+        deadline_s: Seconds without progress before a run gives up.
+
+    Returns:
+        ``{"requests", "serial", "races", "tries"}``. Each race has the ``seed`` that produced it and the
+        ``run``: its ``responses``, ``order`` of steps, ``error`` and ``approximate`` flag. Pass the result to
+        [`summary`][deja.explore.summary] for plain text.
+    """
     schedule = recording if isinstance(recording, Schedule) else Schedule.load(recording)
     rids = sorted(schedule.requests)
     serial_orders = list(itertools.permutations(rids)) if len(rids) <= 5 else [tuple(rids), tuple(reversed(rids))]
@@ -170,6 +198,8 @@ def explore(recording, app_factory, tries: int = 50, seed: int = 1, deadline_s: 
 
 
 def summary(result) -> str:
+    """The result of [`explore`][deja.explore.explore] as plain text, as ``deja explore`` prints it."""
+
     def fmt(resps):
         out = []
         for rid in sorted(resps):

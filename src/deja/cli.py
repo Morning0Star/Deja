@@ -15,7 +15,7 @@ import sys
 
 from . import __version__
 from . import events as ev
-from .fileformat import read
+from .fileformat import FormatError, read
 
 
 def _load_factory(spec: str):
@@ -86,15 +86,18 @@ def cmd_replay(a) -> int:
     if code is not None:
         return code
     factory = _load_factory(a.app)
-    followed = 0
+    followed = ran = 0
     last = None
-    for i in range(a.times):
+    for _ in range(a.times):
         last = replay(schedule, factory, deadline_s=a.deadline)
+        ran += 1
         followed += last.followed and last.same_responses
         if not (last.followed and last.same_responses):
             break
     print(last.summary())
-    print(f"\n{followed}/{a.times} replays matched the recording" if a.times > 1 else "")
+    if a.times > 1:
+        stopped = f" (stopped at the first mismatch, of {a.times} asked)" if ran < a.times else ""
+        print(f"\n{followed}/{ran} replays matched the recording{stopped}")
     return 0 if followed == a.times else 1
 
 
@@ -171,7 +174,11 @@ def cmd_explore(a) -> int:
 def cmd_shrink(a) -> int:
     from .shrink import shrink
 
-    got = shrink(a.recording, _load_factory(a.app), a.out, deadline_s=a.deadline)
+    try:
+        got = shrink(a.recording, _load_factory(a.app), a.out, deadline_s=a.deadline)
+    except ValueError as exc:  # no race in the recording
+        print(f"deja shrink: {exc}", file=sys.stderr)
+        return 1
     print(
         f"{a.out}: kept {', '.join(got['kept'])}; removed {', '.join(got['removed']) or 'nothing'}; "
         f"{got['events'][1]} of {got['events'][0]} events"
@@ -200,69 +207,99 @@ def cmd_export_test(a) -> int:
     return 0
 
 
+APP_HELP = (
+    "module:attribute of your app (attribute defaults to app): an ASGI app, an aiohttp Application, a dict of job "
+    "handlers, or a function whose name starts with create, make or build that returns one of those"
+)
+DEADLINE_HELP = "seconds without progress before the replay reports where it diverged"
+
+
+class _Help(argparse.HelpFormatter):
+    """Shows an option's default when it has a real one (not None or a flag)."""
+
+    def _get_help_string(self, action):
+        text = action.help or ""
+        if (
+            action.default not in (None, False, argparse.SUPPRESS)
+            and "%(default)" not in text
+            and action.option_strings
+        ):
+            text += " (default: %(default)s)"
+        return text
+
+
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(prog="deja", description="Record and replay asyncio interleavings.")
+    fmt = _Help
+    p = argparse.ArgumentParser(
+        prog="deja",
+        description="Record the scheduling order of an asyncio app, explain its races, and replay them.",
+        epilog="Documentation: https://github.com/Morning0Star/Deja#readme",
+    )
     p.add_argument("-V", "--version", action="version", version=f"deja {__version__}")
-    sub = p.add_subparsers(dest="cmd", required=True)
-    s = sub.add_parser("show", help="summarise a recording")
-    s.add_argument("recording")
-    s.set_defaults(fn=cmd_show)
-    r = sub.add_parser("replay", help="replay a recording against an ASGI app")
-    r.add_argument("recording")
-    r.add_argument("--app", required=True, help="module:attribute (an ASGI app or a create_app factory)")
-    r.add_argument("--times", type=int, default=1)
-    r.add_argument("--deadline", type=float, default=10.0, help="seconds without progress before reporting divergence")
-    r.set_defaults(fn=cmd_replay)
-    rp = sub.add_parser("report", help="write an HTML report (optionally replaying the recording too)")
-    rp.add_argument("recording")
-    rp.add_argument("-o", "--out", help="output .html (default: next to the recording)")
-    rp.add_argument("--app", help="module:attribute; when given, replay --times times and include the verdict")
-    rp.add_argument("--times", type=int, default=20)
-    rp.add_argument("--deadline", type=float, default=10.0)
-    rp.set_defaults(fn=cmd_report)
-    v = sub.add_parser("verify", help="replay a recorded race against (fixed) code: does it still happen?")
-    v.add_argument("recording")
-    v.add_argument("--app", required=True, help="module:attribute of the code to check")
-    v.add_argument("--times", type=int, default=5)
-    v.add_argument("--deadline", type=float, default=10.0)
-    v.set_defaults(fn=cmd_verify)
-    d = sub.add_parser("diff", help="replay one recording against two versions of an app and compare")
-    d.add_argument("recording")
-    d.add_argument("--app", required=True, help="module:attribute of the old version")
-    d.add_argument("--against", required=True, help="module:attribute of the new version")
-    d.add_argument("--deadline", type=float, default=10.0)
-    d.set_defaults(fn=cmd_diff)
-    st = sub.add_parser("step", help="replay step by step: pause before recorded steps and inspect the request")
-    st.add_argument("recording")
-    st.add_argument("--app", required=True)
-    st.add_argument("--at", type=int, help="run to this step number, then pause")
+    sub = p.add_subparsers(dest="cmd", required=True, metavar="COMMAND")
+
+    def command(name, fn, text, app=True, deadline=10.0):
+        c = sub.add_parser(
+            name,
+            help=text,
+            description=text[0].upper() + text[1:] + ("" if text.endswith("?") else "."),
+            formatter_class=fmt,
+        )
+        c.add_argument("recording", help="the .deja file")
+        if app:
+            c.add_argument("--app", required=True, help=APP_HELP)
+        if deadline is not None:
+            c.add_argument("--deadline", type=float, default=deadline, help=DEADLINE_HELP)
+        c.set_defaults(fn=fn)
+        return c
+
+    command("show", cmd_show, "summarise a recording: its requests, steps and calls", app=False, deadline=None)
+    r = command("replay", cmd_replay, "replay a recording against your app, with no database or network")
+    r.add_argument("--times", type=int, default=1, help="replay this many times; stops at the first mismatch")
+    rp = command(
+        "report", cmd_report, "write an HTML report of a recording, optionally with a replay verdict", app=False
+    )
+    rp.add_argument("-o", "--out", help="the .html file to write (default: next to the recording)")
+    rp.add_argument("--app", help="also replay against this app (given as for replay) and show the verdict")
+    rp.add_argument("--times", type=int, default=20, help="replays for the verdict")
+    v = command("verify", cmd_verify, "check a fix: does the recorded race still happen with this code?")
+    v.add_argument("--times", type=int, default=5, help="replays to try; fixed means none reproduced the race")
+    d = command("diff", cmd_diff, "replay one recording against two versions of your app and compare them")
+    d.add_argument("--against", required=True, help="module:attribute of the other version")
+    st = command(
+        "step", cmd_step, "replay step by step, pausing before recorded steps to inspect the request", deadline=600.0
+    )
+    st.add_argument("--at", type=int, help="run to this step number, then pause (default: pause at every step)")
     st.add_argument("--task", help="run until this task (q1, q0.2...) is about to run, then pause")
-    st.add_argument("--deadline", type=float, default=600.0)
-    st.set_defaults(fn=cmd_step)
-    ex = sub.add_parser("explore", help="try other orderings of the recorded requests to find races not yet seen")
-    ex.add_argument("recording")
-    ex.add_argument("--app", required=True)
+    ex = command("explore", cmd_explore, "try other orderings of the recorded requests to find races not yet seen")
     ex.add_argument("--tries", type=int, default=50, help="random interleavings to try")
-    ex.add_argument("--seed", type=int, default=1)
-    ex.add_argument("--deadline", type=float, default=10.0)
-    ex.set_defaults(fn=cmd_explore)
-    sh = sub.add_parser("shrink", help="cut a recording down to the requests the race needs")
-    sh.add_argument("recording")
-    sh.add_argument("--app", required=True, help="module:attribute of the app to replay against")
-    sh.add_argument("-o", "--out", required=True)
-    sh.add_argument("--deadline", type=float, default=10.0)
-    sh.set_defaults(fn=cmd_shrink)
-    mg = sub.add_parser("merge", help="merge the workers' recordings of one group request (deja.group)")
-    mg.add_argument("folder", help="<group>/<request id>/ holding one .deja per worker")
-    mg.add_argument("-o", "--out", required=True)
+    ex.add_argument("--seed", type=int, default=1, help="seed of the first random interleaving")
+    sh = command("shrink", cmd_shrink, "cut a recording down to the requests its race needs")
+    sh.add_argument("-o", "--out", required=True, help="the smaller .deja file to write")
+    mg = sub.add_parser(
+        "merge",
+        help="merge the recordings several workers saved for one race",
+        description="Merge the recordings several worker processes saved for one race (DejaMiddleware(group=...)).",
+        formatter_class=fmt,
+    )
+    mg.add_argument("folder", help="the <group>/<id>/ folder holding one .deja file per worker")
+    mg.add_argument("-o", "--out", required=True, help="the merged .deja file to write")
     mg.set_defaults(fn=cmd_merge)
-    x = sub.add_parser("export-test", help="write a pytest regression test for the recorded race")
-    x.add_argument("recording")
-    x.add_argument("--app", required=True, help="module:attribute the test will import")
-    x.add_argument("-o", "--out", required=True, help="the test file to write (the recording is copied beside it)")
-    x.set_defaults(fn=cmd_export_test)
+    x = command(
+        "export-test",
+        cmd_export_test,
+        "write a pytest test that fails while the recorded race reproduces",
+        deadline=None,
+    )
+    x.add_argument(
+        "-o", "--out", required=True, help="the test file to write; the recording is copied to recordings/ next to it"
+    )
     a = p.parse_args(argv)
-    return a.fn(a)
+    try:
+        return a.fn(a)
+    except (OSError, FormatError) as exc:  # a missing or unreadable recording: say so, no traceback
+        print(f"deja {a.cmd}: error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

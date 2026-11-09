@@ -12,6 +12,8 @@ an atomic statement now orders the requests), or it can and the answers change (
 import os
 import re
 import shutil
+from collections.abc import Callable
+from typing import Any
 
 from .analysis import analyze
 from .fileformat import read
@@ -19,6 +21,14 @@ from .replay import Schedule, replay
 
 
 class Verdict:
+    """The outcome of [`verify`][deja.verify.verify].
+
+    Attributes:
+        recording: Path of the recording.
+        results: One [`ReplayResult`][deja.replay.ReplayResult] per replay.
+        story: The race in plain words, from the recording's analysis.
+    """
+
     def __init__(self, recording, results, story):
         self.recording, self.results, self.story = recording, results, story
 
@@ -29,9 +39,11 @@ class Verdict:
 
     @property
     def fixed(self) -> bool:
+        """Whether no replay reproduced the race."""
         return self.reproduced == 0
 
     def how(self, r) -> str:
+        """Why replay ``r`` did or didn't reproduce the race, in one sentence."""
         if r.followed and r.same_responses:
             return "the recorded race happened again"
         if r.divergence:
@@ -47,6 +59,7 @@ class Verdict:
         return "the replay took different I/O calls: " + "; ".join(r.io_misses[:3])
 
     def summary(self) -> str:
+        """``FIXED`` or ``STILL THERE``, the race, and what happened in the last replay."""
         n = len(self.results)
         head = (
             f"FIXED: the race no longer reproduces ({n} of {n} replays differ from the recording)"
@@ -66,8 +79,23 @@ def _fmt(resp):
     return f"{status} {text[:60]}"
 
 
-def verify(recording: str, app_factory, times: int = 5, deadline_s: float = 10.0) -> Verdict:
-    """Replay ``recording`` against ``app_factory`` ``times`` times and say whether the race still happens."""
+def verify(recording: str, app_factory: Callable[[], Any], times: int = 5, deadline_s: float = 10.0) -> Verdict:
+    """Check whether a change to the code stops a recorded race.
+
+    The recording is replayed against the app ``times`` times. The race is still there when a replay follows the
+    recorded interleaving and the requests answer as they did when the bug happened. A fix shows up either as a
+    replay that can't take the recorded steps (a lock or transaction now orders the requests) or as one that takes
+    them and answers differently (a check now catches the conflict).
+
+    Args:
+        recording: Path of the ``.deja`` file with the race.
+        app_factory: Builds the changed app, as for [`replay`][deja.replay.replay].
+        times: Replays to run.
+        deadline_s: Seconds without progress before a replay gives up.
+
+    Returns:
+        A [`Verdict`][deja.verify.Verdict]; ``verdict.fixed`` is the answer and ``verdict.summary()`` explains it.
+    """
     schedule = Schedule.load(recording)
     header, events = read(recording)
     story = analyze(header, events)["story"]
@@ -75,8 +103,21 @@ def verify(recording: str, app_factory, times: int = 5, deadline_s: float = 10.0
     return Verdict(recording, results, story)
 
 
-def diff(recording: str, old_factory, new_factory, deadline_s: float = 10.0) -> str:
-    """Replay one recording against two versions of the app and describe how they differ."""
+def diff(
+    recording: str, old_factory: Callable[[], Any], new_factory: Callable[[], Any], deadline_s: float = 10.0
+) -> str:
+    """Replay one recording against two versions of the app and say how they differ.
+
+    Args:
+        recording: Path of the ``.deja`` file.
+        old_factory: Builds the first version of the app.
+        new_factory: Builds the second version.
+        deadline_s: Seconds without progress before a replay gives up.
+
+    Returns:
+        A plain-text comparison: steps each version followed, each request's recorded, old and new answer, calls
+        without a recorded answer, and the modules whose code differs between them.
+    """
     schedule = Schedule.load(recording)
     a = replay(schedule, old_factory, deadline_s=deadline_s)
     b = replay(schedule, new_factory, deadline_s=deadline_s)
@@ -100,9 +141,19 @@ def diff(recording: str, old_factory, new_factory, deadline_s: float = 10.0) -> 
 
 
 def export_test(recording: str, app_spec: str, out: str) -> str:
-    """Write a pytest regression test for the recorded race (and copy the recording next to it).
+    """Write a pytest regression test for the recorded race.
 
-    The test fails while the race reproduces and passes once a fix stops it; keep it to catch the race coming back.
+    The test replays the recording and fails while the race reproduces; once a fix stops it, the test passes.
+    Keep it in the test suite to catch the race coming back. The recording is copied into a ``recordings/``
+    folder next to the test file, which the test reads.
+
+    Args:
+        recording: Path of the ``.deja`` file with the race.
+        app_spec: The app as ``"module:attribute"``, the same form as ``--app``.
+        out: Path of the test file to write.
+
+    Returns:
+        The path of the test file.
     """
     header, events = read(recording)
     a = analyze(header, events)

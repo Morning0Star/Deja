@@ -22,6 +22,8 @@ import contextvars
 import os
 import threading
 import time as _time
+from collections.abc import Callable
+from typing import Any
 
 from . import events as ev
 from .fileformat import read as read_file
@@ -849,6 +851,19 @@ class WorkersHarness:
 
 # ---------------------------------------------------------------------- entry point
 class ReplayResult:
+    """What a replay did, compared with the recording.
+
+    Attributes:
+        recorded: Request id to the recorded ``(status, body)``.
+        replayed: Request id to the ``(status, body)`` the app answered in replay.
+        divergence: ``None``, or a description of where the replay could not follow the recording (which task
+            was due to run, and what ran instead).
+        steps_expected: Recorded steps in request scope.
+        steps_followed: Steps the replay took in the recorded order.
+        io_misses: Calls the app made in replay that the recording has no answer for (it took another path).
+        code_changed: Modules whose source differs from the recorded fingerprints.
+    """
+
     def __init__(self, schedule, loop, harness, divergence):
         self.recorded = schedule.responses
         self.replayed = harness.results
@@ -867,13 +882,16 @@ class ReplayResult:
 
     @property
     def followed(self) -> bool:
+        """Whether the replay took every recorded step, in order, and every call had a recorded answer."""
         return self.divergence is None and self.steps_followed == self.steps_expected and not self.io_misses
 
     @property
     def same_responses(self) -> bool:
+        """Whether every request answered exactly as recorded (status and body)."""
         return all(self.replayed.get(rid) == resp for rid, resp in self.recorded.items())
 
     def summary(self) -> str:
+        """A plain-text account of the replay: steps followed, responses compared, and anything to watch for."""
         lines = [
             f"followed {self.steps_followed}/{self.steps_expected} recorded steps"
             + (f", {len(self.extra_steps)} extra" if self.extra_steps else "")
@@ -918,11 +936,44 @@ def _fmt(resp):
     return f"{status} {text[:80]}"
 
 
-def replay(recording, app_factory, deadline_s: float = 10.0, track: bool = True, on_step=None) -> ReplayResult:
-    """Replay ``recording`` (a path or a Schedule) against a fresh app from ``app_factory()``.
+def replay(
+    recording: "str | Schedule",
+    app_factory: Callable[[], Any],
+    deadline_s: float = 10.0,
+    track: bool = True,
+    on_step: Callable[[Any], object] | None = None,
+) -> ReplayResult:
+    """Replay a recording against a fresh copy of the app, in the recorded interleaving.
 
-    ``track`` tracks the app's shared in-memory state as :class:`deja.DejaMiddleware` does (see
-    :mod:`deja.autotrack`); replay needs it to put worker threads' accesses in the recorded order."""
+    The recorded requests are sent again (no client needed) and only allowed to run in the recorded order, on a
+    virtual clock. Database, HTTP and other recorded calls get their recorded answers, so no service has to be
+    running. If the app can't take a recorded step, the replay stops and the result says where.
+
+    The kind of app decides how requests are sent: an ASGI app gets ASGI calls, an aiohttp ``Application`` is
+    served on a local port, and a dict of handlers replays [`deja.scope`][deja.scope.scope] jobs. A recording merged from
+    several workers gets one app per worker.
+
+    Args:
+        recording: Path of a ``.deja`` file (or an already loaded ``Schedule``).
+        app_factory: Called with no arguments to build the app, once per replay (once per worker for a merged
+            recording). Build it as in production: same configuration, same feature flags.
+        deadline_s: Seconds of real time without progress before the replay gives up and reports where it stuck.
+        track: Track the app's shared in-memory state as [`deja.DejaMiddleware`][deja.DejaMiddleware] does, with the rules saved
+            in the recording. Replay needs it to put worker threads' accesses in the recorded order.
+        on_step: Called as ``on_step(info)`` before each recorded step, with a
+            [`StepInfo`][deja.stepper.StepInfo]. See [`Stepper`][deja.stepper.Stepper].
+
+    Returns:
+        The [`ReplayResult`][deja.replay.ReplayResult].
+
+    Example:
+        ```python
+        from deja.replay import replay
+
+        result = replay("recordings/wallet.deja", create_app)
+        assert result.followed and result.same_responses, result.summary()
+        ```
+    """
     schedule = recording if isinstance(recording, Schedule) else Schedule.load(recording)
     loop = ReplayLoop(schedule, deadline_s=deadline_s)
     loop.on_step = on_step

@@ -1,6 +1,6 @@
 """Track shared in-memory state automatically, so the report sees it without ``deja.track`` calls.
 
-On the first request, :class:`deja.DejaMiddleware` (and the replay harness) looks at the app's code: its route
+On the first request, [`deja.DejaMiddleware`][deja.DejaMiddleware] (and the replay harness) looks at the app's code: its route
 handlers and FastAPI dependencies, and every function, class and module of the app they use, followed through
 their code (``services.reserve()`` -> ``services`` -> ``HOLDS``). What it finds there:
 
