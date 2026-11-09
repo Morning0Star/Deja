@@ -46,7 +46,9 @@ First public release candidate.
 
 ### Project
 - `py.typed`: type checkers use Déjà's annotations. mypy checks the package in CI.
-- Coverage is measured (`pytest --cov`, about 82% of statements and branches on CPython 3.14).
+- Coverage is measured and enforced: the Linux 3.14 CI job fails below 80% (about 82% of statements and
+  branches today).
+- `compose.yaml` starts every service the tests use (`docker compose up -d --wait`), locally and in CI.
 - The PyPy job runs the whole suite; tests whose driver doesn't run on PyPy (asyncpg, grpcio) skip themselves.
 - pre-commit hooks (ruff and file checks) and monthly Dependabot updates.
 - The HTML report loads nothing from the network: no web fonts, and a content security policy that forbids it.

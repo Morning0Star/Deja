@@ -11,17 +11,13 @@ python -m venv .venv && . .venv/bin/activate          # Windows: .venv\Scripts\a
 pip install -e ".[dev,gallery]"                        # add [frameworks,drivers] for every adapter test
 ```
 
-Tests that need a service skip when it isn't running. To run them all, start the containers the CI uses:
+Tests that need a service skip when it isn't running. To run them all, start the services the CI uses
+(Postgres, Redis, MongoDB, MySQL and Kafka, defined in `compose.yaml`, on 127.0.0.1 only):
 
 ```bash
-docker run -d --name deja-pg -e POSTGRES_USER=deja -e POSTGRES_PASSWORD=deja -e POSTGRES_DB=deja \
-  -p 127.0.0.1:55432:5432 postgres:17-alpine
-docker run -d --name deja-redis -p 127.0.0.1:56379:6379 redis:7-alpine
-docker run -d --name deja-mongo -p 127.0.0.1:27217:27017 mongo:7
-docker run -d --name deja-mysql -p 127.0.0.1:53306:3306 -e MYSQL_ROOT_PASSWORD=deja -e MYSQL_DATABASE=deja mysql:8.4
+docker compose up -d --wait    # starts all five and waits until each is healthy
+docker compose down            # when you're done
 ```
-
-(Kafka: see `.github/workflows/tests.yml`.)
 
 ## Before a pull request
 

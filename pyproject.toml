@@ -52,7 +52,7 @@ deja = "deja.cli:main"
 packages = ["src/deja"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "tests", "gallery", "docs", "mkdocs.yml", "README.md", "CHANGELOG.md", "CONTRIBUTING.md",
+include = ["src", "tests", "gallery", "docs", "mkdocs.yml", "compose.yaml", "README.md", "CHANGELOG.md", "CONTRIBUTING.md",
            "SECURITY.md", "LICENSE", "pyproject.toml"]
 
 [tool.ruff]
@@ -75,6 +75,7 @@ source = ["deja"]
 branch = true
 
 [tool.coverage.report]
+fail_under = 80  # measured 82% on CPython 3.14 with every service running
 show_missing = true
 skip_covered = true
 exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "pragma: no cover"]
