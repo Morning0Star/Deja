@@ -17,7 +17,7 @@ from yarl import URL
 
 from . import io_call, passthrough, patch
 
-_undo = []
+_undo: list = []
 
 
 def _body_text(kw):

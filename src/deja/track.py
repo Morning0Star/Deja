@@ -89,7 +89,7 @@ def _fresh(v, refs) -> bool:
     container (reference count) and no local variable of the code storing it (which 3.14 doesn't count)."""
     if _FRESH_REFS is None or refs > _FRESH_REFS:
         return False
-    f = sys._getframe(2)
+    f: Any = sys._getframe(2)
     for _ in range(40):
         if f is None:
             break
@@ -297,7 +297,7 @@ class TrackedDict(_MappingOps, dict):
         for k, v in dict(*a, **kw).items():
             self[k] = v
 
-    def __ior__(self, other):
+    def __ior__(self, other):  # type: ignore[misc]  # in place, as the built-in type does
         self.update(other)
         return self
 
@@ -450,7 +450,7 @@ class TrackedList(_MemberOps, list):
     def extend(self, items):
         self._add_all(list.extend, items)
 
-    def __iadd__(self, items):
+    def __iadd__(self, items):  # type: ignore[misc]  # in place, as the built-in type does
         self.extend(items)
         return self
 
@@ -514,7 +514,7 @@ class TrackedSet(_MemberOps, set):
         for it in its:
             self._add_all(set.update, it)
 
-    def __ior__(self, other):
+    def __ior__(self, other):  # type: ignore[misc]  # in place, as the built-in type does
         self.update(other)
         return self
 
@@ -523,7 +523,7 @@ class TrackedSet(_MemberOps, set):
             for item in list(it):
                 self.discard(item)
 
-    def __isub__(self, other):
+    def __isub__(self, other):  # type: ignore[misc]  # in place, as the built-in type does
         self.difference_update(other)
         return self
 
@@ -766,7 +766,12 @@ def track(obj: Any, name: str | None = None, key: str | None = None) -> Any:
         collections.deque,
     ):  # a subclass of its own: track a copy of the closest supported type
         if isinstance(obj, base):
-            plain = collections.defaultdict(obj.default_factory, obj) if base is collections.defaultdict else base(obj)
+            src: Any = obj  # its type was just checked against base
+            plain = (
+                collections.defaultdict(src.default_factory, src)
+                if isinstance(src, collections.defaultdict)
+                else base(src)
+            )
             return copy_of(plain, name or base.__name__.lower(), key)
     if not hasattr(obj, "__dict__"):
         raise TypeError(f"deja.track can't track {type(obj).__name__}: it has no __dict__")

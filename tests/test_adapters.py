@@ -109,6 +109,7 @@ def test_httpx_calls_replay_from_the_recording(tmp_path):
 # ---------------------------------------------------------------------- asyncpg
 @pytest.mark.skipif(not reachable("127.0.0.1", 55432), reason="test Postgres not running")
 def test_postgres_replays_with_the_database_unreachable(tmp_path, monkeypatch):
+    pytest.importorskip("asyncpg")  # not on PyPy
     from gallery import _pg, wallet
 
     monkeypatch.setattr(_pg, "DSN", PG_DSN)

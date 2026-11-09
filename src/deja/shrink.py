@@ -21,7 +21,7 @@ def _root(path):
     return path.split(".", 1)[0] if path else None
 
 
-def without(header, events, removed: set):
+def without(header: dict, events: list, removed: set) -> tuple[dict, list]:
     """The recording with requests ``removed`` (``q3``...) taken out, and nothing before the first kept request."""
     out = []
     for e in events:

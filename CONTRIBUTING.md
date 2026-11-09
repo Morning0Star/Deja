@@ -27,6 +27,9 @@ docker run -d --name deja-mysql -p 127.0.0.1:53306:3306 -e MYSQL_ROOT_PASSWORD=d
 
 ```bash
 ruff check src tests docs/examples && ruff format src tests gallery docs/examples   # lint and format
+mypy                          # type check (configured in pyproject.toml)
+python -m pytest --cov=deja   # coverage report
+pre-commit install            # optional: run ruff and the file checks on every commit
 python -m pytest -q           # the suite; please run it on the oldest and newest supported Python if you can
 python -m gallery.acceptance --recordings 2 --replays 20   # the race gallery still records and replays
 ```

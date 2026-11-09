@@ -43,3 +43,12 @@ First public release candidate.
   CLI and Python API reference, supported libraries, configuration, recording format, limits and troubleshooting.
   Its examples run in the test suite, and tests check that it covers every command, option and public name.
 - Type annotations and Google-style docstrings on the public API.
+
+### Project
+- `py.typed`: type checkers use Déjà's annotations. mypy checks the package in CI.
+- Coverage is measured (`pytest --cov`, about 82% of statements and branches on CPython 3.14).
+- The PyPy job runs the whole suite; tests whose driver doesn't run on PyPy (asyncpg, grpcio) skip themselves.
+- pre-commit hooks (ruff and file checks) and monthly Dependabot updates.
+- The HTML report loads nothing from the network: no web fonts, and a content security policy that forbids it.
+- Quitting `deja step` at a pause no longer loses the paused step; a stopped replay ends its leftover tasks
+  cleanly (no "coroutine was never awaited" or "Task was destroyed but it is pending" messages).

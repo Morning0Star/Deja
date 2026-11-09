@@ -11,7 +11,7 @@ from requests.structures import CaseInsensitiveDict
 
 from . import io_call_sync, patch
 
-_undo = []
+_undo: list = []
 
 
 def _encode(resp):

@@ -15,7 +15,7 @@ import httpx
 
 from . import _context, io_call, io_call_sync, passthrough, patch, replaying
 
-_undo = []
+_undo: list = []
 
 
 def _encode(resp):

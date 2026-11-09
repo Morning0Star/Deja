@@ -12,7 +12,7 @@ from aiobotocore.client import AioBaseClient
 from .. import codec
 from . import io_call, io_live, passthrough, patch
 
-_undo = []
+_undo: list = []
 
 
 class Body:

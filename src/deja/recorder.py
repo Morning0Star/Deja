@@ -183,7 +183,7 @@ class Recorder:
         self._outer: dict[int, tuple] = {}  # request id -> (task, its path before request scope)
         self.started_at = time.time()
         self.dumps: list[str] = []
-        self.loop = None
+        self.loop: Any = None
         self.catalog: dict = {}  # adapter metadata replay needs (statement columns, startup call results)
         self._listener_ids = itertools.count()  # LISTEN callbacks, numbered in registration order
         self._thread_n: dict[str, int] = {}  # task path -> worker-thread calls made so far (deja.threads)
@@ -323,7 +323,7 @@ class Recorder:
         TASK_GONE events, so an id reused by a later task resolves to the right path at each point in time.
         Owners that aren't tasks (futures, handles) resolve to PLUMB.
         """
-        out = []
+        out: list[tuple] = []
         idmap: dict[int, str] = {}
         live = self.ids.get
         step, plumb = ev.STEP, (ev.PLUMB,)
@@ -436,7 +436,7 @@ class Recorder:
     def since(self, marker: tuple) -> list:
         """Events from ``marker`` (identity match) to now."""
         start = next((i for i, x in enumerate(self.buffer) if x is marker), 0)
-        rest = list(self.buffer)[start:]
+        rest = collections.deque(list(self.buffer)[start:])
         saved, self.buffer = self.buffer, rest  # resolve only the slice
         try:
             return self.events()

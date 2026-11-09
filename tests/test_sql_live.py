@@ -4,16 +4,18 @@ it commits, so both checks find nothing and both insert. The report has to know 
 import asyncio
 import contextlib
 
-import asyncpg
 import pytest
 from fastapi import FastAPI
-from test_adapters import DEAD_PORT_DSN, PG_DSN, reachable
-from test_streams import record_concurrently
 
-from deja import sqltouch
-from deja.analysis import analyze
-from deja.fileformat import read
-from deja.replay import replay
+asyncpg = pytest.importorskip("asyncpg")  # not on PyPy
+
+from test_adapters import DEAD_PORT_DSN, PG_DSN, reachable  # noqa: E402
+from test_streams import record_concurrently  # noqa: E402
+
+from deja import sqltouch  # noqa: E402
+from deja.analysis import analyze  # noqa: E402
+from deja.fileformat import read  # noqa: E402
+from deja.replay import replay  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
     not reachable("127.0.0.1", int(PG_DSN.rsplit(":", 1)[1].split("/")[0])), reason="test Postgres not running"
@@ -90,7 +92,10 @@ def notice_app(dsn):
 
         @app.get("/notes")
         async def notes():
-            await asyncio.sleep(0.05)
+            for _ in range(200):  # until both server messages arrived (slow under coverage tracing)
+                if len(state["notes"]) >= 2:
+                    break
+                await asyncio.sleep(0.01)
             return {"notes": list(state["notes"])}
 
         return app

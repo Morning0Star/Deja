@@ -107,7 +107,7 @@ class _RealType(type):
         return issubclass(sub, cls._deja_real)
 
 
-class DejaDatetime(_REAL_DATETIME, metaclass=_RealType):
+class DejaDatetime(_REAL_DATETIME, metaclass=_RealType):  # type: ignore[misc,valid-type]
     _deja_real = _REAL_DATETIME
 
     def __new__(cls, *args, **kwargs):  # constructing gives a real datetime
@@ -136,7 +136,7 @@ DejaDatetime.__name__ = DejaDatetime.__qualname__ = "datetime"
 DejaDatetime.__module__ = "datetime"
 
 
-class DejaDate(_REAL_DATE, metaclass=_RealType):
+class DejaDate(_REAL_DATE, metaclass=_RealType):  # type: ignore[misc,valid-type]
     _deja_real = _REAL_DATE
 
     def __new__(cls, *args, **kwargs):
@@ -155,6 +155,9 @@ DejaDate.__module__ = "datetime"
 
 class _DatetimeModule(types.ModuleType):
     """``import datetime`` in an app module: the real module, with the recording ``datetime`` and ``date``."""
+
+    datetime: type
+    date: type
 
     def __getattr__(self, name):
         return getattr(_dt, name)
@@ -205,7 +208,7 @@ def rebind(namespaces) -> list:
 
     ``namespaces`` are module dicts of the app. Returns ``module.name`` of each name changed. The wrappers stay
     pass-throughs outside a recording, so leaving them in place after the loop closes is harmless."""
-    done = []
+    done: list = []
     if not _shim_of:
         return done
     for g in namespaces:

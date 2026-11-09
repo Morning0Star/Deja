@@ -57,7 +57,7 @@ def deja_middleware(
         ```
     """
     rules = {"skip": list(track_skip or ()), "only": list(track_only) if track_only is not None else None}
-    scanned = []
+    scanned: list[bool] = []
 
     @web.middleware
     async def middleware(request, handler):

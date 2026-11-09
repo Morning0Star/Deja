@@ -49,5 +49,14 @@ def test_write_report_next_to_recording(tmp_path):
     rec.buffer.extend(sample_events())
     path = rec.dump(str(tmp_path / "r.deja"))
     out = write_report(path, replay={"times": 3, "matched": 3, "summary": "3/3"})
-    page = open(out, encoding="utf-8").read()
+    with open(out, encoding="utf-8") as f:
+        page = f.read()
     assert out.endswith("r.html") and "Déjà" in page and embedded(page)["replay"]["matched"] == 3
+
+
+def test_report_loads_nothing_from_the_network():
+    """The page holds recorded data: it must not fetch fonts, scripts or anything else (and its CSP forbids it)."""
+    page = build({}, sample_events(), source="x.deja")
+    assert "default-src 'none'" in page
+    assert not re.search(r"""(?:src|href)\s*=\s*["']?https?:""", page), "external resource in the report"
+    assert "@import" not in page and "url(http" not in page

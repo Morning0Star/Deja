@@ -14,7 +14,7 @@ from grpc.aio import _channel
 from .. import codec
 from . import io_call, passthrough, patch
 
-_undo = []
+_undo: list = []
 
 
 def _serialize(msg, serializer=None):

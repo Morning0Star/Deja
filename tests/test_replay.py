@@ -63,7 +63,8 @@ def test_replay_notes_when_the_apps_code_changed(tmp_path):
     src.mkdir()
     here = __import__("os").path.dirname(__file__)
     shutil.copy(f"{here}/shop_services.py", src / "shop_services_v.py")
-    (src / "shop_app_v.py").write_text(open(f"{here}/shop_app.py").read().replace("shop_services", "shop_services_v"))
+    with open(f"{here}/shop_app.py", encoding="utf-8") as f:
+        (src / "shop_app_v.py").write_text(f.read().replace("shop_services", "shop_services_v"), encoding="utf-8")
     sys.path.insert(0, str(src))
     try:
         import shop_app_v

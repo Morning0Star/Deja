@@ -16,7 +16,7 @@ from aiomysql import pool as pool_mod
 
 from . import _dbapi, io_call, passthrough, patch, replaying
 
-_undo = []
+_undo: list = []
 OP, FLAVOR = "sql.query", "mysql"
 _open: "weakref.WeakSet" = weakref.WeakSet()  # connections with a transaction open (MySQL's own flag lags a SELECT)
 
