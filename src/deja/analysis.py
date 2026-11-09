@@ -510,9 +510,9 @@ def analyze(header: dict, events: list) -> dict:
                     touches.append(row)
             if e[2].endswith(".tx.start") and e[4] == "ok":
                 if not tx.get(e[1]):
-                    level = (io.get("detail") or {}).get("isolation") or "read_committed"
-                    if level in ("repeatable_read", "serializable"):
-                        iso[e[1]] = {"level": level, "snap": None}
+                    isolation = (io.get("detail") or {}).get("isolation") or "read_committed"
+                    if isolation in ("repeatable_read", "serializable"):
+                        iso[e[1]] = {"level": isolation, "snap": None}
                 tx.setdefault(e[1], []).append([])
             elif e[2].endswith((".tx.commit", ".tx.rollback")) and tx.get(e[1]):
                 done = tx[e[1]].pop()

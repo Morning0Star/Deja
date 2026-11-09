@@ -16,7 +16,7 @@ from aiosqlite.context import contextmanager
 
 from . import _dbapi, io_call, passthrough, patch, replaying
 
-_undo = []
+_undo: list = []
 OP, FLAVOR = "sql.query", "sqlite"
 _DML = re.compile(r"^\s*(insert|update|delete|replace)\b", re.I)
 

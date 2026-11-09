@@ -48,7 +48,7 @@ class _RecordingMixin:
         self.deja = recorder or Recorder()
         self.deja.loop = self
         self._deja_inner_factory = None
-        super().set_task_factory(self._deja_task_factory)
+        super().set_task_factory(self._deja_task_factory)  # type: ignore[misc]
         shims.install()
         self._deja_shimmed = True
         self._deja_adapters = adapters.install()
@@ -215,7 +215,7 @@ class _RecordingMixin:
         handle = None
 
 
-class RecordingSelectorLoop(_RecordingMixin, asyncio.SelectorEventLoop):
+class RecordingSelectorLoop(_RecordingMixin, asyncio.SelectorEventLoop):  # type: ignore[misc]  # run_in_executor records the call; same behaviour as the base
     def __init__(self, selector=None, recorder: Recorder | None = None):
         super().__init__(selector)
         self._deja_setup(recorder)
@@ -223,7 +223,7 @@ class RecordingSelectorLoop(_RecordingMixin, asyncio.SelectorEventLoop):
 
 if sys.platform == "win32":
 
-    class RecordingProactorLoop(_RecordingMixin, asyncio.ProactorEventLoop):
+    class RecordingProactorLoop(_RecordingMixin, asyncio.ProactorEventLoop):  # type: ignore[misc]  # run_in_executor records the call; same behaviour as the base
         def __init__(self, proactor=None, recorder: Recorder | None = None):
             super().__init__(proactor)
             self._deja_setup(recorder)

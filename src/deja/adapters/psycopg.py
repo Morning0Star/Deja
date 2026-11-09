@@ -15,7 +15,7 @@ from psycopg import pq
 
 from . import _dbapi, io_call, passthrough, patch, replaying
 
-_undo = []
+_undo: list = []
 OP, FLAVOR = "pg.query", "psycopg"
 
 

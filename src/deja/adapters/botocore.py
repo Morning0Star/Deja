@@ -8,7 +8,7 @@ import botocore.client
 from .. import codec
 from . import io_call_sync, patch
 
-_undo = []
+_undo: list = []
 
 
 class Body:

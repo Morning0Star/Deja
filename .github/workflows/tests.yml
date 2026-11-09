@@ -48,7 +48,7 @@ jobs:
           python -m pip install -e ".[drivers]" || echo "drivers extra not installable here: those tests skip"
 
       - name: Lint
-        run: python -m pip install ruff && ruff check src tests docs/examples && ruff format --check src tests gallery benchmarks spikes docs/examples
+        run: python -m pip install ruff mypy && ruff check src tests docs/examples && ruff format --check src tests gallery benchmarks spikes docs/examples && mypy
 
       - name: Tests
         run: python -m pytest -q
@@ -73,9 +73,9 @@ jobs:
         with:
           python-version: "pypy3.12"
       - name: Install
-        run: python -m pip install -e ".[dev]" fastapi httpx uvicorn
-      - name: Tests (no database adapters)
+        # the drivers that run on PyPy; asyncpg, grpcio, moto and litestar don't, and their tests skip themselves
         run: >
-          python -m pytest -q --ignore=tests/test_sql_live.py --ignore=tests/test_sqlalchemy.py
-          --ignore=tests/test_streams.py --ignore=tests/test_adapters.py --ignore=tests/test_pubsub.py
-          --ignore=tests/test_gallery.py
+          python -m pip install -e ".[dev]" fastapi httpx uvicorn aiosqlite aiomysql pymongo aiokafka
+          aiohttp requests aiobotocore quart django
+      - name: Tests
+        run: python -m pytest -q

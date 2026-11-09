@@ -48,7 +48,7 @@ COPY_METHODS = ("copy_to_table", "copy_records_to_table", "copy_from_table", "co
 DEFAULTS = {"execute": "", "executemany": None, "fetch": list, "fetchrow": None, "fetchval": None, "fetchmany": list}
 CATALOG_LIMIT = 2000
 
-_undo = []
+_undo: list = []
 
 
 def _wrap_query(name):
@@ -294,7 +294,7 @@ def _wrap_add_listener(original):
                 return await callback(con, pid, ch, payload)
         else:
 
-            def wrapper(con, pid, ch, payload):
+            def wrapper(con, pid, ch, payload):  # type: ignore[misc]  # sync or async, like the callback
                 rec.notify(lid, pid, ch, payload)
                 return callback(con, pid, ch, payload)
 
@@ -314,7 +314,7 @@ def _callback_wrapper(callback, before):
             return await callback(*args)
     else:
 
-        def wrapper(*args):
+        def wrapper(*args):  # type: ignore[misc]  # sync or async, like the callback
             before(*args)
             return callback(*args)
 

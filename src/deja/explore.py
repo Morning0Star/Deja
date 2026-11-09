@@ -19,7 +19,7 @@ import random
 from collections.abc import Callable
 from typing import Any
 
-from .replay import ASGIHarness, ReplayLoop, Schedule, _replay_rid  # noqa: F401
+from .replay import ASGIHarness, ReplayLoop, Schedule, _replay_rid, close_replay_loop  # noqa: F401
 from .scope import JobHarness
 
 
@@ -104,7 +104,6 @@ class ExploreLoop(ReplayLoop):
 
 def run_once(schedule, app_factory, policy, deadline_s=10.0) -> dict:
     """One exploration run: ``{"responses", "order", "approximate", "error"}``."""
-    import asyncio
 
     loop = ExploreLoop(schedule, policy, deadline_s=deadline_s)
     app = app_factory()
@@ -129,13 +128,7 @@ def run_once(schedule, app_factory, policy, deadline_s=10.0) -> dict:
         error = f"{type(exc).__name__}: {str(exc)[:200]}"
     finally:
         loop.deja.release_threads()
-        try:
-            for t in asyncio.all_tasks(loop):
-                t.cancel()
-            loop.run_until_complete(asyncio.sleep(0))
-        except Exception:
-            pass
-        loop.close()
+        close_replay_loop(loop)
     return {
         "responses": dict(harness.results),
         "order": loop.order,
@@ -179,7 +172,7 @@ def explore(
     schedule = recording if isinstance(recording, Schedule) else Schedule.load(recording)
     rids = sorted(schedule.requests)
     serial_orders = list(itertools.permutations(rids)) if len(rids) <= 5 else [tuple(rids), tuple(reversed(rids))]
-    serial = {}
+    serial: dict = {}
     for order in serial_orders:
         run = run_once(schedule, app_factory, ("serial", list(order)), deadline_s)
         serial.setdefault(_key(run), (order, run))

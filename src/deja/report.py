@@ -2,7 +2,8 @@
 
 Top: what went wrong, in plain words (from ``deja.analysis``, no LLM). Then the key moments, numbered and clickable.
 Then a zoomable, pannable swimlane timeline (canvas) with a minimap, a details panel, what each request touched,
-and the replay verdict. Works offline; the data is embedded in the page.
+and the replay verdict. The data is embedded in the page, which loads nothing from the network (its content security
+policy forbids it) and uses fonts already on the machine.
 
     deja report crash.deja
     deja report crash.deja --app app.main:create_app --times 20     # adds a replay verdict
@@ -19,8 +20,7 @@ from .fileformat import read
 PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Déjà report · __SOURCE__</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
 <style>
 :root { --bg:#06080b; --panel:#0b1016; --panel-2:#0f161e; --line:#1d2a36; --line-2:#2a3c4c; --fg:#e4eef6; --muted:#8ea4b6;
   --cyan:#2fe4ff; --amber:#ffb52e; --red:#ff3d5e; --lime:#a6ff5c;
@@ -423,9 +423,8 @@ def build(header: dict, events: list, replay=None, source: str = "") -> str:
 def write_report(recording: str, out: str | None = None, replay: Any = None) -> str:
     """Write the HTML report of a recording: the race in plain words, the requests and a timeline.
 
-    The page is one file with the recording's analysis embedded; it works offline (it loads two web fonts when
-    online and falls back to system fonts). It holds what the recording holds, so share it as carefully (see
-    Security in the docs).
+    The page is one file with the recording's analysis embedded, and loads nothing from the network. It holds what
+    the recording holds, so share it as carefully (see Security in the docs).
 
     Args:
         recording: Path of the ``.deja`` file.

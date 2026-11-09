@@ -20,9 +20,16 @@ from sqlalchemy import Integer, select  # noqa: E402
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column  # noqa: E402
 
-pytestmark = pytest.mark.skipif(
-    not reachable("127.0.0.1", int(PG_DSN.rsplit(":", 1)[1].split("/")[0])), reason="test Postgres not running"
-)
+# These apps use @app.on_event on purpose: Déjà must handle apps written the older way too.
+ON_EVENT = pytest.mark.filterwarnings(r"ignore:\s*on_event is deprecated:DeprecationWarning")
+pytest.importorskip("asyncpg")  # the tests use the asyncpg dialect (not on PyPy)
+
+pytestmark = [
+    pytest.mark.skipif(
+        not reachable("127.0.0.1", int(PG_DSN.rsplit(":", 1)[1].split("/")[0])), reason="test Postgres not running"
+    ),
+    ON_EVENT,
+]
 
 
 class Base(DeclarativeBase):

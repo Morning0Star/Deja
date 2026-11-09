@@ -1,0 +1,19 @@
+# Monthly update pull requests for GitHub Actions and the Python dependencies. CI stays manual: run the tests
+# workflow on a Dependabot branch before merging it.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      python:
+        patterns: ["*"]
+    open-pull-requests-limit: 5

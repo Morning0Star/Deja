@@ -22,6 +22,7 @@ import contextvars
 import os
 import threading
 import time as _time
+import types
 from collections.abc import Callable
 from typing import Any
 
@@ -383,6 +384,11 @@ class ReplayRecorder(Recorder):
 
 # ---------------------------------------------------------------------- loop
 class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
+    deja: ReplayRecorder
+    _ready: collections.deque  # asyncio's own state, used directly (not in the type stubs)
+    _scheduled: list
+    _default_executor: Any
+
     def __init__(self, schedule: Schedule, deadline_s: float = 10.0):
         super().__init__()
         self._deja_setup(ReplayRecorder(schedule))
@@ -390,7 +396,7 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
         self.pos = 0
         self.vt = 0.0
         self.armed = False  # the schedule is enforced only once the harness has finished startup
-        self.harness = None
+        self.harness: Any = None
         self.trace: list[str] = []  # controlled steps actually run, in order
         self.extra: list[str] = []  # controlled steps run after the schedule was exhausted
         self.deadline_s = deadline_s
@@ -400,7 +406,7 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
         self.code_changed: list = []  # app modules whose source differs from the recording's
         self.io_grace = 0.0  # real seconds to wait for socket I/O before jumping the virtual clock
         self._tasks: dict = {}  # path -> the replayed task that last took a step under it
-        self.on_step = None  # callback(StepInfo) before each recorded step (deja.stepper)
+        self.on_step: Any = None  # callback(StepInfo) before each recorded step (deja.stepper)
         self.tail_skipped: list = []  # recorded steps of tasks that had already finished in replay
 
     def time(self):
@@ -532,7 +538,13 @@ class ReplayLoop(_RecordingMixin, asyncio.SelectorEventLoop):
                 from .stepper import StepInfo
 
                 owner = getattr(handle._callback, "__self__", None)
-                self.on_step(StepInfo(self, len(self.trace), path, owner if isinstance(owner, asyncio.Task) else None))
+                try:
+                    self.on_step(
+                        StepInfo(self, len(self.trace), path, owner if isinstance(owner, asyncio.Task) else None)
+                    )
+                except BaseException:  # stopped at the pause: the step stays queued, so cleanup can still end it
+                    self._ready.appendleft(handle)
+                    raise
                 self._progress()  # time spent paused is not time the replay waited
             self.trace.append(path)
         if path is not None or not self.armed:  # only request steps count as progress once the schedule runs:
@@ -936,6 +948,29 @@ def _fmt(resp):
     return f"{status} {text[:80]}"
 
 
+def close_replay_loop(loop) -> None:
+    """Cancel what is left of a replay and close its loop.
+
+    The cancellations are delivered with the plain asyncio loop step, not the replay's: the replay order no longer
+    applies (it may have ended mid-pass, for example when ``deja step`` is quit), and a request task that was
+    started but never ran must still get the step that ends it, or Python warns that its coroutine was never
+    awaited."""
+    loop.on_step = None
+    loop._run_once = types.MethodType(asyncio.base_events.BaseEventLoop._run_once, loop)  # type: ignore[attr-defined]
+    try:
+        for t in asyncio.all_tasks(loop):
+            t.cancel()
+        for _ in range(20):  # each pass delivers a round of cancellations (a task may catch one and await again)
+            # always at least one pass: callbacks already queued run too (anyio stops its worker threads there,
+            # and they would keep the process from exiting)
+            loop.run_until_complete(asyncio.sleep(0))
+            if all(t.done() for t in asyncio.all_tasks(loop)):
+                break
+    except Exception:
+        pass
+    loop.close()
+
+
 def replay(
     recording: "str | Schedule",
     app_factory: Callable[[], Any],
@@ -979,6 +1014,7 @@ def replay(
     loop.on_step = on_step
     app = app_factory()
     apps = [app]
+    harness: Any
     if isinstance(app, dict):  # handlers of deja.scope() jobs
         from .scope import JobHarness
 
@@ -1036,11 +1072,5 @@ def replay(
         divergence = "stopped by the user"
     finally:
         loop.deja.release_threads()
-        try:
-            for t in asyncio.all_tasks(loop):
-                t.cancel()
-            loop.run_until_complete(asyncio.sleep(0))
-        except Exception:
-            pass
-        loop.close()
+        close_replay_loop(loop)
     return ReplayResult(schedule, loop, harness, divergence)

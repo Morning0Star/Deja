@@ -155,7 +155,8 @@ def merge(paths: Iterable[str], out: str) -> str:
     blocks.sort(key=lambda b: (b[0] or 0, b[1], b[2]))
     merged = [e for _, _, _, evs in blocks for e in evs]
     head = dict(parts[0][1])
-    outside, background = {}, {}
+    outside: dict = {}
+    background: dict = {}
     for k, h, _ in parts:
         for key, results in ((h.get("catalog") or {}).get("outside") or {}).items():
             outside.setdefault(key, results)

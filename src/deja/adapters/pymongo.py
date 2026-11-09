@@ -16,7 +16,7 @@ from pymongo.results import BulkWriteResult, DeleteResult, InsertManyResult, Ins
 from .. import codec
 from . import io_call, passthrough, patch
 
-_undo = []
+_undo: list = []
 _cursors: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()  # cursor -> fetched documents
 METHODS = (
     "insert_one",

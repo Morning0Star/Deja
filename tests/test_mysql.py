@@ -15,7 +15,10 @@ from deja.analysis import analyze  # noqa: E402
 from deja.fileformat import read  # noqa: E402
 from deja.replay import replay  # noqa: E402
 
-pytestmark = pytest.mark.skipif(not reachable("127.0.0.1", 53306), reason="test MySQL not running")
+pytestmark = [
+    pytest.mark.skipif(not reachable("127.0.0.1", 53306), reason="test MySQL not running"),
+    pytest.mark.filterwarnings("ignore:Table 'deja_stock' already exists"),  # a server note on CREATE ... IF NOT EXISTS
+]
 LIVE = dict(host="127.0.0.1", port=53306, user="root", password="deja", db="deja")
 DEAD = dict(host="127.0.0.1", port=1, user="nobody", password="", db="none")
 

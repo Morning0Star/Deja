@@ -17,7 +17,7 @@ try:
     import sqlglot
     from sqlglot import exp
 except ImportError:  # pragma: no cover - optional
-    sqlglot = None
+    sqlglot = None  # type: ignore[assignment]
 
 from . import codec
 

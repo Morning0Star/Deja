@@ -17,7 +17,7 @@ import redis.asyncio.client as rclient
 from .. import codec
 from . import _context, io_call, passthrough, patch, replaying
 
-_undo = []
+_undo: list = []
 PUSHED = "redis"  # the "pid" of a pushed pub/sub message in the recording's notification events
 
 

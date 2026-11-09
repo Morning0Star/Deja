@@ -15,6 +15,10 @@ from deja import recording_loop
 from deja.fileformat import read
 from deja.replay import replay
 
+# These apps use @app.on_event on purpose: Déjà must handle apps written the older way too.
+ON_EVENT = pytest.mark.filterwarnings(r"ignore:\s*on_event is deprecated:DeprecationWarning")
+pytestmark = ON_EVENT
+
 
 def record_concurrently(factory, calls, path):
     out = {}
@@ -153,6 +157,7 @@ def notify_app(dsn):
 
 @pg
 def test_listen_notify_replays_without_the_database(tmp_path):
+    pytest.importorskip("asyncpg")  # not on PyPy
     path, responses = record_concurrently(
         notify_app(PG_DSN), [("GET", "/wait"), ("POST", "/send")], str(tmp_path / "notify.deja")
     )

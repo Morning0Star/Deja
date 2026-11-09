@@ -49,7 +49,7 @@ def cmd_show(a) -> int:
             body = e[6][:60] if isinstance(e[6], (bytes, bytearray)) else e[6]
             print(f"  q{e[1]}  {e[3]} {e[4]}  -> {status.get(e[1], '?')}  body={body!r}")
     print("interleaving of request tasks (one line per loop pass):")
-    line = []
+    line: list[str] = []
     for e in events:
         if e[0] == ev.BATCH and line:
             print("  " + " ".join(line))
@@ -94,6 +94,9 @@ def cmd_replay(a) -> int:
         followed += last.followed and last.same_responses
         if not (last.followed and last.same_responses):
             break
+    if last is None:
+        print("deja replay: --times must be at least 1", file=sys.stderr)
+        return 2
     print(last.summary())
     if a.times > 1:
         stopped = f" (stopped at the first mismatch, of {a.times} asked)" if ran < a.times else ""
@@ -117,6 +120,9 @@ def cmd_report(a) -> int:
         for _ in range(a.times):
             last = replay(schedule, factory, deadline_s=a.deadline)
             ok += last.followed and last.same_responses
+        if last is None:
+            print("deja report: --times must be at least 1", file=sys.stderr)
+            return 2
         verdict = {
             "times": a.times,
             "matched": ok,
@@ -233,7 +239,7 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         prog="deja",
         description="Record the scheduling order of an asyncio app, explain its races, and replay them.",
-        epilog="Documentation: https://github.com/Morning0Star/Deja#readme",
+        epilog="Documentation: https://morning0star.github.io/Deja/",
     )
     p.add_argument("-V", "--version", action="version", version=f"deja {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True, metavar="COMMAND")

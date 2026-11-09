@@ -6,7 +6,7 @@ import contextlib
 import pytest
 from fastapi import FastAPI
 
-psycopg = pytest.importorskip("psycopg")
+psycopg = pytest.importorskip("psycopg", exc_type=ImportError)  # also when installed without libpq
 psycopg_pool = pytest.importorskip("psycopg_pool")
 
 import httpx  # noqa: E402

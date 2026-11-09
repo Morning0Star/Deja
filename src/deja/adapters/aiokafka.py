@@ -18,7 +18,7 @@ from aiokafka.structs import ConsumerRecord, RecordMetadata, TopicPartition
 from .. import codec
 from . import _context, io_call, passthrough, patch, replaying
 
-_undo = []
+_undo: list = []
 PUSHED = "kafka"
 
 
