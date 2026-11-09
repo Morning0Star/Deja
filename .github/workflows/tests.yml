@@ -22,14 +22,14 @@ jobs:
         os: ${{ fromJSON(inputs.scope == 'full' && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
         python: ${{ fromJSON(inputs.scope == 'full' && '["3.12", "3.13", "3.14", "3.15"]' || '["3.14"]') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The services the adapter tests use (compose.yaml; Linux runners only, elsewhere those tests skip).
       - name: Start test services
         if: runner.os == 'Linux'
         run: docker compose up -d --wait
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
 
@@ -61,8 +61,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "pypy3.12"
       - name: Install

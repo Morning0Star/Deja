@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Start Postgres
         run: |
@@ -27,7 +27,7 @@ jobs:
             -p 127.0.0.1:55432:5432 postgres:17-alpine
           for i in $(seq 1 30); do docker exec deja-pg pg_isready -U deja && break; sleep 1; done
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
@@ -54,7 +54,7 @@ jobs:
           python benchmarks/run_bench.py --rates "${{ inputs.rates }}" --duration "${{ inputs.duration }}"
           --reps "${{ inputs.reps }}" --out bench-results.json
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bench-results
           path: bench-results.json
