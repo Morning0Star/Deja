@@ -46,7 +46,10 @@ have read different rows are approximate, and marked so.
 - **Free-threaded Python** (3.13t, 3.14t) and **Trio** aren't supported.
 - **Unverified Python versions**: on a version newer than those listed in [Configuration](reference/configuration.md#supported-pythons),
   the recording loop warns and runs unrecorded.
-- **PyPy**: values stored inside tracked containers stay plain (no reference counts to check that safely).
+- **PyPy**: values stored inside tracked containers stay plain (no reference counts to check that safely). Finding
+  the app's shared state uses `gc.get_referrers`, which on PyPy walks the whole heap: about 2 seconds for 400,000
+  objects. It happens once, on the first recorded request, and at the start of each replay (on CPython it takes
+  milliseconds).
 
 ## Cost
 

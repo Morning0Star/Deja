@@ -50,6 +50,8 @@ First public release candidate.
   branches today).
 - `compose.yaml` starts every service the tests use (`docker compose up -d --wait`), locally and in CI.
 - The PyPy job runs the whole suite; tests whose driver doesn't run on PyPy (asyncpg, grpcio) skip themselves.
+  A threads test timed the whole replay, including the heap scan that finds shared state (seconds on PyPy with a
+  big heap); it now times only the replayed steps, so it no longer fails at random when the machine is busy.
 - pre-commit hooks (ruff and file checks) and monthly Dependabot updates.
 - The HTML report loads nothing from the network: no web fonts, and a content security policy that forbids it.
 - Quitting `deja step` at a pause no longer loses the paused step; a stopped replay ends its leftover tasks
