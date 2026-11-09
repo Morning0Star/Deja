@@ -108,7 +108,49 @@ def _function(v):
     return v if isinstance(v, types.FunctionType) and _app_globals(v.__globals__) else None
 
 
+def _layers(app, limit: int = 12) -> list:
+    """The app and the apps it wraps, outermost first: Socket.IO's ``ASGIApp`` (``other_asgi_app``) and ASGI
+    middleware that keeps the wrapped app as ``.app``. Stops at an app with routes (it is the app itself)."""
+    out: list = []
+    while app is not None and len(out) < limit and all(app is not x for x in out):
+        out.append(app)
+        nxt = getattr(app, "other_asgi_app", None)
+        if nxt is None and not (getattr(app, "routes", None) or getattr(app, "router", None)):
+            nxt = getattr(app, "app", None)
+        app = nxt if callable(nxt) else None
+    return out
+
+
+def _socketio_handlers(layer):
+    """Event handlers of a python-socketio server behind ``socketio.ASGIApp``: decorated functions and the ``on_*``
+    methods of class-based namespaces."""
+    server = getattr(layer, "engineio_server", None)
+    handlers = getattr(server, "handlers", None)
+    if isinstance(handlers, dict):
+        for events in handlers.values():
+            if isinstance(events, dict):
+                yield from events.values()
+    namespaces = getattr(server, "namespace_handlers", None)
+    if isinstance(namespaces, dict):
+        for ns in namespaces.values():
+            for name in dir(type(ns)):
+                if name.startswith("on_"):
+                    yield getattr(type(ns), name, None)
+
+
 def _endpoints(app):
+    """Route and event handlers of the app and of the apps it wraps (Socket.IO around FastAPI, middleware)."""
+    out = []
+    for layer in _layers(app):
+        for fn in _socketio_handlers(layer):
+            fn = _function(fn)
+            if fn is not None:
+                out.append(fn)
+        out += _layer_endpoints(layer)
+    return out
+
+
+def _layer_endpoints(app):
     """Route handlers, unwrapped: Starlette / FastAPI (and their dependencies), Litestar, Quart / Flask, Django."""
     out = []
     for fn in _other_framework_handlers(app):
@@ -300,9 +342,10 @@ def _candidates(app, reach, wanted=ALL):
                 apps[id(v)] = (v, prefix + k)
                 scan(vars(v), f"{prefix}{k}.", depth + 1)
 
-    state = getattr(getattr(app, "state", None), "_state", None)
-    if isinstance(state, dict):
-        scan(state)
+    for layer in _layers(app):  # app.state of the app inside wrappers (Socket.IO, middleware) too
+        state = getattr(getattr(layer, "state", None), "_state", None)
+        if isinstance(state, dict):
+            scan(state)
     for g in reach.modules.values():
         scan(g, reach.name(g, ""))
     for fn in reach.functions:

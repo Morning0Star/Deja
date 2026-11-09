@@ -6,6 +6,11 @@ the recording format or the Python API; recordings from older versions keep load
 
 ## [Unreleased]
 
+### Fixed
+- Shared state is found through the layers an app is wrapped in: python-socketio's `ASGIApp` around FastAPI and
+  ASGI middleware that keeps the wrapped app as `.app`. Socket.IO event handlers (functions and class-based
+  namespaces) are followed too. Before, an app wrapped in Socket.IO had nothing tracked.
+
 ## [0.1.0] - 2026-11-09
 
 First public release.
