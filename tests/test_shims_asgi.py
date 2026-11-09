@@ -116,6 +116,39 @@ def test_exception_saves_a_recording(tmp_path):
     assert any(e[0] == ev.STEP for e in events)
 
 
+def test_window_keeps_a_request_that_finished_first(tmp_path):
+    """The failing request is the later one: its partner in the race ended normally before it, and must stay in the
+    saved window, from its start."""
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    dumps = []
+
+    @app.get("/fast")
+    async def fast():
+        await asyncio.sleep(0.01)
+        return {}
+
+    @app.get("/slow")
+    async def slow():
+        await asyncio.sleep(0.05)
+        deja.flag("late")
+        return {}
+
+    app.add_middleware(deja.DejaMiddleware, directory=str(tmp_path), on_dump=lambda p, r: dumps.append(p))
+
+    async def main():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            await asyncio.gather(c.get("/fast"), c.get("/slow"))  # fast starts first, ends first
+        await asyncio.sleep(0.2)
+
+    run(main)
+    assert len(dumps) == 1
+    _, events = fileformat.read(dumps[0])
+    assert sorted(e[4] for e in events if e[0] == ev.REQUEST) == ["/fast", "/slow"]
+    assert sum(e[0] == ev.RESPONSE for e in events) == 2
+
+
 def test_flag_saves_a_recording(tmp_path):
     (r,), rec, dumps = drive(tmp_path, ("GET", "/flagged", None))
     assert r.status_code == 200 and dumps and dumps[0][1] == "flag: invariant broken"

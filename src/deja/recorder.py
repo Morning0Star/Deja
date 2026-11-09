@@ -12,6 +12,8 @@ import itertools
 import os
 import sys
 import time
+from collections.abc import Iterable
+from typing import Any
 
 from . import events as ev
 from .fileformat import FORMAT
@@ -144,7 +146,32 @@ def _digest(key):
 
 
 class Recorder:
-    def __init__(self, max_events: int = DEFAULT_MAX_EVENTS, redact_headers=("authorization", "cookie", "x-api-key")):
+    """The rolling record of everything a recording loop saw: task steps, requests and the answers to their calls.
+
+    Events go into a fixed-size ring buffer, so memory stays bounded however long the app runs. When a request
+    fails, the window of events around it is written to a ``.deja`` file. Create one yourself only to change the
+    settings below, and pass it to [`deja.recording_loop`][deja.recording_loop].
+
+    Args:
+        max_events: Size of the ring buffer, in events. The default (200,000) holds about 15,000 to 20,000
+            requests of history for a typical API in tens of MB. A request whose start has already left the buffer
+            when a recording is saved is left out of the replay; raise this for long WebSocket connections.
+        redact_headers: Request headers whose values are recorded as ``"<redacted>"``, case-insensitive. This
+            replaces the default list, so include ``authorization``, ``cookie`` and ``x-api-key`` when adding more.
+
+    Example:
+        ```python
+        import functools
+        loop_factory = functools.partial(deja.recording_loop, deja.Recorder(max_events=1_000_000))
+        asyncio.run(main(), loop_factory=loop_factory)
+        ```
+    """
+
+    def __init__(
+        self,
+        max_events: int = DEFAULT_MAX_EVENTS,
+        redact_headers: Iterable[str] = ("authorization", "cookie", "x-api-key"),
+    ):
         self.buffer: collections.deque = collections.deque(maxlen=max_events)
         self.ids = TaskRegistry()
         self.ids.on_new = self._on_task_new
@@ -231,7 +258,16 @@ class Recorder:
         self.buffer.append((ev.NOTIFY, lid, pid, channel, payload, _now()))
 
     def mark(self, label: str = "") -> tuple:
-        """Append a marker; ``dump(path, since=marker)`` saves everything from it on."""
+        """Put a marker in the buffer, to save everything from this point on with [`dump`][deja.Recorder.dump].
+
+        Useful in tests and scripts that drive the app themselves.
+
+        Args:
+            label: Text stored with the marker.
+
+        Returns:
+            The marker, to pass to ``dump(path, since=marker)``.
+        """
         marker = (ev.MARK, label)
         self.buffer.append(marker)
         return marker
@@ -274,9 +310,10 @@ class Recorder:
         self.buffer.append((ev.EXCEPTION, rid, type(exc).__qualname__, str(exc)[:500]))
 
     def forget_request(self, rid: int):
+        """Drop a finished request's own overlap set. Requests still running keep ``rid`` in theirs: if one of them
+        fails later, its causal window must still start at ``rid``'s start (``rid`` may be the other half of the
+        race). Their sets go when they finish, so memory stays bounded by the requests in flight."""
         self._overlap.pop(rid, None)
-        for s in self._overlap.values():
-            s.discard(rid)
 
     # ------------------------------------------------------------------ resolving the hot-path entries
     def events(self) -> list:
@@ -375,6 +412,9 @@ class Recorder:
         for rid, t in starts.items():
             if t < t0 and (ends.get(rid) is None or ends[rid] >= t0):
                 t0 = t
+        for rid, t in starts.items():  # requests still running when it closed: include them to their end
+            if t0 <= t <= t1 and ends.get(rid) is not None and ends[rid] > t1:
+                t1 = ends[rid]
         out, now = [], None
         for e in events:
             i = self._TIME_AT.get(e[0])
@@ -403,7 +443,21 @@ class Recorder:
         finally:
             self.buffer = saved
 
-    def dump(self, path: str, rid: int | None = None, since: tuple | None = None, **extra) -> str:
+    def dump(self, path: str, rid: int | None = None, since: tuple | None = None, **extra: Any) -> str:
+        """Write a recording now, without waiting for a request to fail.
+
+        Args:
+            path: The ``.deja`` file to write.
+            rid: Save the causal window of this request (what the middleware saves when it fails).
+            since: Save everything from this marker (from [`mark`][deja.Recorder.mark]) on. Takes precedence over
+                ``rid``.
+            **extra: Extra fields for the recording's header, such as ``reason="..."``.
+
+        With neither ``rid`` nor ``since``, the whole buffer is saved.
+
+        Returns:
+            ``path``.
+        """
         from .fileformat import write
 
         header = self.header()
