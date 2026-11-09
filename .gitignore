@@ -15,3 +15,7 @@ deja-recordings/
 .venv31410/
 demo/
 site/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
