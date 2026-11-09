@@ -19,9 +19,9 @@ def make_app():
 
     async def restock():  # a background job: tops the stock up every so often
         while True:
-            await asyncio.sleep(0.02)
+            await asyncio.sleep(0.05)
             n = stock["widget"]
-            await asyncio.sleep(0.01)  # e.g. asks the warehouse how many to add
+            await asyncio.sleep(0.1)  # e.g. asks the warehouse how many to add (a wide window: no timing luck)
             stock["widget"] = n + 10
 
     @contextlib.asynccontextmanager
@@ -32,10 +32,14 @@ def make_app():
 
     app = FastAPI(lifespan=lifespan)
 
+    @app.get("/ping")
+    async def ping():  # a first request: Déjà starts tracking the app's state when one arrives
+        return {}
+
     @app.post("/buy")
     async def buy():
         n = stock["widget"]
-        await asyncio.sleep(0.015)
+        await asyncio.sleep(0.02)
         stock["widget"] = n - 1
         return {"left": stock["widget"]}
 
@@ -59,13 +63,16 @@ def test_request_and_background_task_race(tmp_path):
     async def main():
         app = make_app()
         app.add_middleware(deja.DejaMiddleware, directory=str(tmp_path))
+        loop = asyncio.get_running_loop()
+        started = loop.time()  # the job starts with the app; its 2nd round reads at +200 ms and writes at +300 ms
         task, inbox = await lifespan(app, {})
-        rec = asyncio.get_running_loop().deja
+        rec = loop.deja
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://app") as c:
+            await c.get("/ping")  # as in a running app, an earlier request has switched tracking on
             marker = rec.mark("t")
-            await asyncio.sleep(0.015)  # the job is between its read and its write
+            await asyncio.sleep(max(0.0, started + 0.23 - loop.time()))  # the job is between its read and write
             out["r"] = await c.post("/buy")
-            await asyncio.sleep(0.03)
+            await asyncio.sleep(0.15)  # until after the job's write
             out["path"] = rec.dump(os.path.join(str(tmp_path), "bg.deja"), since=marker)
         await inbox.put({"type": "lifespan.shutdown"})
 

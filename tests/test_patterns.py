@@ -189,3 +189,42 @@ def test_redis_commands_name_every_key():
     assert _redis(["EVAL", "return 1", "2", "k1", "k2", "arg"]) == [("write", "redis:k1"), ("write", "redis:k2")]
     assert _redis(["WATCH", "k"]) == [("read", "redis:k")]
     assert _redis([["GET", "a"], ["SET", "b", "1"]], op="redis.pipeline") == [("read", "redis:a"), ("write", "redis:b")]
+
+
+def test_deadlock_found_when_the_other_transaction_commits_before_the_error():
+    """Linux timing: the winning transaction finishes and commits before the deadlock error of the loser is logged.
+    Its locks were held while the loser's statement waited, so it's still a deadlock (seen on Linux CI runners)."""
+    upd = "UPDATE deja_acct SET bal = bal {} 1 WHERE id = $1"
+
+    def call(task, op, t, result, detail=None, status="ok"):
+        return [("I", task, op, t), ("O", task, op, "d", status, result, t + 1, detail or {})]
+
+    events = [
+        ("Q", 0, "r0", "POST", "/move/1/2", [], b"", 100),
+        ("Q", 1, "r0", "POST", "/move/2/1", [], b"", 110),
+        *call("q0", "pg.tx.start", 120, None, {"isolation": "read_committed"}),
+        *call("q1", "pg.tx.start", 130, None, {"isolation": "read_committed"}),
+        *call("q1", "pg.execute", 140, "UPDATE 1", {"sql": upd.format("-"), "params": [2]}),
+        *call("q0", "pg.execute", 150, "UPDATE 1", {"sql": upd.format("-"), "params": [1]}),
+        ("I", "q1", "pg.execute", 200),  # q1 waits for row 1 (held by q0)...
+        ("I", "q0", "pg.execute", 201),  # ...and q0 for row 2 (held by q1)
+        ("O", "q1", "pg.execute", "d", "ok", "UPDATE 1", 300, {"sql": upd.format("+"), "params": [1]}),
+        *call("q1", "pg.tx.commit", 310, None),  # q1 commits before q0's error is logged
+        ("A", 1, 200, b'{"ok":true}', 320),
+        (
+            "O",
+            "q0",
+            "pg.execute",
+            "d",
+            "err",
+            {"__t": "exc", "type": "asyncpg.exceptions:DeadlockDetectedError", "msg": "deadlock detected"},
+            330,
+            {"sql": upd.format("+"), "params": [2]},
+        ),
+        *call("q0", "pg.tx.rollback", 340, None),
+        ("A", 0, 200, b'{"ok":false}', 350),
+    ]
+    a = analyze({}, events)
+    assert a["conflicts"], a["story"]
+    c = a["conflicts"][0]
+    assert c["pattern"] == "deadlock" and {c["x"], c["y"]} == {"deja_acct[id=1]", "deja_acct[id=2]"}, a["story"]

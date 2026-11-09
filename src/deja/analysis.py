@@ -399,6 +399,7 @@ def analyze(header: dict, events: list) -> dict:
     tx: dict[str, list] = {}  # task -> stack of the writes made in each open transaction / savepoint
     iso: dict[str, dict] = {}  # task -> {"level", "snap"} of its open transaction (REPEATABLE READ / SERIALIZABLE)
     held: dict[str, list] = {}  # task -> rows its open transaction wrote or locked (for deadlocks)
+    ended: list = []  # (task, rows it held, seq its transaction ended): it may end before a deadlock is reported
     deadlocks: list = []
 
     def stamp(t):
@@ -524,15 +525,17 @@ def analyze(header: dict, events: list) -> dict:
                     touches.extend({**w, "seq": seq, "t": t1, "committed": True} for w in done)
                 if not tx[e[1]]:
                     iso.pop(e[1], None)
-                    held.pop(e[1], None)
+                    rows = held.pop(e[1], None)
+                    if rows:
+                        ended.append((e[1], rows, seq))
             if e[4] == "err" and "deadlock" in str((io.get("raw") or {}).get("type", "")).lower():
-                deadlocks.append(
-                    {
-                        "io": io,
-                        "held": {k: list(v) for k, v in held.items() if k != e[1]},
-                        "mine": list(held.get(e[1], [])),
-                    }
-                )
+                others = {k: list(v) for k, v in held.items() if k != e[1]}
+                for task, rows, end in ended:
+                    # a transaction that ended after this statement started still held its locks while it waited
+                    # (the other side of a deadlock can commit before the error reaches this request: Linux timing)
+                    if task != e[1] and end > io["seq0"]:
+                        others.setdefault(task, []).extend(rows)
+                deadlocks.append({"io": io, "held": others, "mine": list(held.get(e[1], []))})
         elif code == ev.TOUCH and e[1] and e[1][0] in "qb":
             t = stamp(e[5] if len(e) > 5 else None)
             touches.append(
@@ -825,6 +828,19 @@ def _range_conflicts(touches):
     return out
 
 
+def _first_race(reads_a, writes_a, reads_b):
+    """The earliest read of A that B also read before A's next write: ``(read_a, write_a or None, read_b)``.
+
+    Every read counts, not only the first: a background task loops, reading and writing the same thing round after
+    round, and a request can race with any round."""
+    for r_a in reads_a:
+        w_a = next((w for w in writes_a if w["seq"] > r_a["seq"]), None)
+        r_b = next((r for r in reads_b if r["seq"] > r_a["seq"] and (w_a is None or r["seq"] < w_a["seq"])), None)
+        if r_b is not None:
+            return r_a, w_a, r_b
+    return None
+
+
 def _conflicts(touches):
     """Pairs of requests whose reads and writes of one resource interleaved.
 
@@ -859,8 +875,9 @@ def _conflicts(touches):
         for t in acc:
             if t["req"] not in reqs:
                 reqs.append(t["req"])
-        for i, a in enumerate(reqs):
-            for b in reqs[i + 1 :]:
+        for i, first in enumerate(reqs):
+            for second in reqs[i + 1 :]:
+                a, b = first, second  # renamed below when the other one read first in the round that raced
                 ra = [t for t in acc if t["req"] == a and t["kind"] == "read"]
                 rb = [t for t in acc if t["req"] == b and t["kind"] == "read"]
                 wa = [t for t in acc if t["req"] == a and t["kind"] == "write"]
@@ -869,9 +886,13 @@ def _conflicts(touches):
                     continue
                 if all(t.get("serializable") for t in ra + rb + wa + wb):
                     continue  # both SERIALIZABLE and both committed: Postgres would have aborted one otherwise
-                r_a, r_b = ra[0], rb[0]
-                first_wa = next((w for w in wa if w["seq"] > r_a["seq"]), None)
-                if r_a["seq"] < r_b["seq"] and (first_wa is None or r_b["seq"] < first_wa["seq"]):
+                race = _first_race(ra, wa, rb)
+                swapped = _first_race(rb, wb, ra)
+                if swapped and (race is None or swapped[0]["seq"] < race[0]["seq"]):
+                    race = swapped  # b read first in the round that raced: name them the other way round
+                    a, b, wa, wb = b, a, wb, wa
+                if race:
+                    r_a, first_wa, r_b = race
                     later_wb = next((w for w in wb if w["seq"] > r_b["seq"]), None)
                     involved = [r_a, r_b] + [w for w in (first_wa, later_wb) if w]
                     possible = any(t.get("broad") for t in involved)

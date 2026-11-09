@@ -29,7 +29,9 @@ def stock_app(cfg):
 
         @contextlib.asynccontextmanager
         async def lifespan(app):
-            state["pool"] = await aiomysql.create_pool(minsize=1, maxsize=2, **cfg)
+            # both connections up front: opening the second one on demand can take longer than the first request
+            # (seen on Linux), and then the two requests never overlap
+            state["pool"] = await aiomysql.create_pool(minsize=2, maxsize=2, **cfg)
             async with state["pool"].acquire() as c:
                 async with c.cursor() as cur:
                     await cur.execute("CREATE TABLE IF NOT EXISTS deja_stock (sku VARCHAR(20) PRIMARY KEY, qty INT)")

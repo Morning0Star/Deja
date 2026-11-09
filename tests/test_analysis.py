@@ -135,3 +135,22 @@ def test_call_kinds_override_the_http_method():
 
     with pytest.raises(ValueError):
         deja.calls({"GET x/y": "maybe"})
+
+
+def test_a_looping_background_task_races_in_a_later_round():
+    """A periodic job reads and writes the same value round after round; a request races with its second round.
+    Every read counts, not only the job's first one."""
+    events = [
+        (ev.TOUCH, "b0", "stock[widget]", "read", 5, 1),  # round 1: on its own
+        (ev.TOUCH, "b0", "stock[widget]", "write", 15, 2),
+        (ev.TOUCH, "b0", "stock[widget]", "read", 15, 3),  # round 2 reads...
+        (ev.REQUEST, 1, "r0", "POST", "/buy", [], b"", 4),
+        (ev.TOUCH, "q1", "stock[widget]", "read", 15, 5),  # ...the request reads the same 15...
+        (ev.TOUCH, "q1", "stock[widget]", "write", 14, 6),
+        (ev.RESPONSE, 1, 200, b"{}", 7),
+        (ev.TOUCH, "b0", "stock[widget]", "write", 25, 8),  # ...and the job's write wipes out the request's
+    ]
+    a = analyze({}, events)
+    c = a["conflicts"][0]
+    assert c["pattern"] == "lost-update" and {c["a"], c["b"]} == {"b0", "q1"}, a["story"]
+    assert c["read_a"] == c["read_b"] == "15" and c["last_writer"] == "b0"

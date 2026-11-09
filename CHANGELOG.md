@@ -29,6 +29,9 @@ First public release candidate.
 - In-memory state is tracked automatically: containers (and values inside them), the app's objects, pydantic
   models and module variables the routes' code reaches.
 - HTML report with the story of each race, key moments and a zoomable timeline.
+- A background task that loops (reads and writes the same state round after round) is checked against requests
+  in every round, not only its first; a deadlock is found even when the other transaction commits before the
+  deadlock error is logged (the order Linux produces).
 
 ### Replay and tools
 - Deterministic replay of the recorded interleaving with a virtual clock, no database or network needed; worker
